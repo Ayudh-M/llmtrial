@@ -5,7 +5,7 @@ import time
 from .model_loader import load_causal_lm, generate_json_only, build_inputs, _render_chat
 from .utils import parse_envelope
 from .json_enforcer import validate_envelope, coerce_minimal_defaults
-from .strategies import REGISTRY as STRATS
+from .strategies import build_strategy
 
 @dataclass
 class Agent:
@@ -16,11 +16,12 @@ class Agent:
     system_prompt: str
     seed: int = 7
     max_new_tokens: int = 768
-    strategy_id: str = "strategy-01"
+    strategy_id: str = "S1"
 
     def __post_init__(self):
         self.tok, self.model = load_causal_lm(self.model_id, seed=self.seed)
-        self.cfg = STRATS.get(self.strategy_id, STRATS["strategy-01"])
+        self.strategy = build_strategy(self.strategy_id)
+        self.cfg = self.strategy.agent_defaults
 
     def _build_user_prompt(self, task: str, transcript: List[Dict[str, Any]]) -> str:
         # Include last peer [CONTACT] or request.to_peer and any arbiter hint

@@ -47,6 +47,7 @@ class HFChatAgent:
             last = transcript[-1]
             peer_context = json.dumps(last.get("envelope", {}), ensure_ascii=False)
         usr = f"Task: {task}\nPeer context: {peer_context}\nReturn ONLY the JSON object per schema."
+        usr = self.strategy.decorate_prompts(usr, {"agent": self.name})
         return [{"role":"system","content":sys}, {"role":"user","content":usr}]
 
     def step(self, task: str, transcript: List[Dict[str, Any]]):

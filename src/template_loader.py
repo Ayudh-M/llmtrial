@@ -3,6 +3,8 @@ import yaml, json
 from pathlib import Path
 from typing import Any, Dict
 
+from .strategies import StrategyDefinition, get_strategy_definition
+
 ROOT = Path(__file__).resolve().parents[1]
 REGISTRY = ROOT / "prompts" / "registry.yaml"
 
@@ -19,11 +21,11 @@ def load_registry() -> Dict[str, Any]:
         raise ValueError("Registry must contain a 'scenarios' mapping.")
     return data
 
-def load_strategy(name: str) -> Dict[str, Any]:
-    path = ROOT / "prompts" / "strategies" / f"{name}.yaml"
-    if not path.exists():
-        raise FileNotFoundError(f"Strategy file not found: {path}")
-    return _load_yaml(path)
+def load_strategy(name: str) -> StrategyDefinition:
+    try:
+        return get_strategy_definition(name)
+    except KeyError as exc:
+        raise KeyError(f"Strategy id not found in registry: {name}") from exc
 
 def load_roleset(path_str: str) -> Dict[str, Any]:
     path = (ROOT / path_str).resolve()

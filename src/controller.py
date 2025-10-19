@@ -1,5 +1,7 @@
 from __future__ import annotations
 from typing import Dict, Any, Tuple, Optional, List
+
+from .strategies import Strategy
 from pydantic import ValidationError
 from .schemas import Envelope
 from .canonicalize import canonicalize_for_hash
@@ -33,8 +35,21 @@ def run_controller(task: str, agent_a, agent_b, max_rounds: int = 8, kind: Optio
     transcript: List[Dict[str, Any]] = []
     last_a: Optional[Envelope] = None
     last_b: Optional[Envelope] = None
+    strategy: Optional[Strategy] = None
+
+    strat_a = getattr(agent_a, "strategy", None)
+    strat_b = getattr(agent_b, "strategy", None)
+    if strat_a is not None and strat_a is strat_b:
+        strategy = strat_a
+
+    controller_ctx: Dict[str, Any] = {"task": task, "kind": kind, "transcript": transcript}
 
     for r in range(1, max_rounds + 1):
+        if strategy:
+            controller_ctx["round"] = r
+            controller_ctx["transcript"] = transcript
+            strategy.apply_pre_round_hooks(controller_ctx)
+
         # Agent A step
         env_a_raw, _ = agent_a.step(task, transcript)
         env_a = _checked(env_a_raw)
@@ -44,6 +59,10 @@ def run_controller(task: str, agent_a, agent_b, max_rounds: int = 8, kind: Optio
         env_b_raw, _ = agent_b.step(task, transcript)
         env_b = _checked(env_b_raw)
         transcript.append({"r": r, "actor": "b", "envelope": env_b.model_dump()})
+
+        if strategy:
+            controller_ctx["transcript"] = transcript
+            strategy.apply_controller_behaviors(controller_ctx)
 
         # Handshake acceptance paths (either direction)
         if last_b:
