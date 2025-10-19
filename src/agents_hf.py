@@ -4,6 +4,7 @@ from typing import Any, Dict, List, Optional
 from .model_loader import generate_json_only
 from .strategies import Strategy
 from .sanitize import repair_envelope
+from .pseudocode import augment_system_prompt
 
 
 JSON_GUIDE = (
@@ -35,7 +36,7 @@ def _extract_json(text: str) -> Optional[Dict[str, Any]]:
 class HFChatAgent:
     def __init__(self, name: str, system_prompt: str, tokenizer, model, strategy: Strategy):
         self.name = name
-        self.system_prompt = system_prompt
+        self.system_prompt = augment_system_prompt(system_prompt)
         self.tokenizer = tokenizer
         self.model = model
         self.strategy = strategy

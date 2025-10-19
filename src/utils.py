@@ -8,10 +8,7 @@ def sha256_hex(s: str) -> str:
     return hashlib.sha256(s.encode("utf-8")).hexdigest()
 
 
-def normalize_text(text: str | None) -> str:
-    if text is None:
-        return ""
-    normalized = unicodedata.normalize("NFKC", text)
-    return "".join(
-        ch for ch in normalized if unicodedata.category(ch) != "Cf"
-    )
+def normalize_text(text: str) -> str:
+    """Normalize text with NFKC and strip invisible format characters."""
+    normed = unicodedata.normalize("NFKC", text or "")
+    return "".join(ch for ch in normed if unicodedata.category(ch) != "Cf")

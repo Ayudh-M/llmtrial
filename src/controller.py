@@ -7,11 +7,7 @@ from .schemas import Envelope
 from .canonicalize import canonicalize_for_hash
 from .utils import sha256_hex
 from .sanitize import repair_envelope
-from .pseudocode import (
-    PseudocodeValidationError,
-    validate_and_normalise_pseudocode,
-)
-
+from .pseudocode import validate_and_normalise_pseudocode, PseudocodeValidationError
 
 def _checked(env_dict: Dict[str, Any]) -> Envelope:
     try:
@@ -20,13 +16,12 @@ def _checked(env_dict: Dict[str, Any]) -> Envelope:
         repaired = repair_envelope(env_dict)
         return Envelope.model_validate(repaired)
 
+
 def _apply_pseudocode(env: Envelope) -> Envelope:
     fs = env.final_solution
     if fs and isinstance(fs.canonical_text, str) and fs.canonical_text.strip():
         try:
-            normalized, final_return = validate_and_normalise_pseudocode(
-                fs.canonical_text
-            )
+            normalized, final_return = validate_and_normalise_pseudocode(fs.canonical_text)
             fs.canonical_text = normalized
             setattr(fs, "return_value", final_return)
         except PseudocodeValidationError as exc:
@@ -45,22 +40,14 @@ def _final_return_value(env: Envelope) -> Optional[str]:
     text = env.final_solution.canonical_text or ""
     return text.strip() or None
 
-
 def _canon_and_hash(text: str, kind: Optional[str]) -> Tuple[str, str]:
     c = canonicalize_for_hash(text or "", kind)
     return c, sha256_hex(c)
 
 def _handshake_accept(prev_env: Envelope, curr_env: Envelope, kind: Optional[str]) -> Optional[str]:
-    """If curr_env is a SOLVED+ACCEPT that copies prev_env's canonical_text, return canonical; else None."""
+    """If curr_env is a SOLVED+ACCEPT that copies prev_env's canonical result, return canonical; else None."""
     try:
-        verdict = str(curr_env.content.get("verdict", "")) if curr_env.content else ""
-        if (
-            curr_env.tag == "[SOLVED]"
-            and curr_env.status == "SOLVED"
-            and verdict.upper() == "ACCEPT"
-            and curr_env.final_solution
-            and prev_env.final_solution
-        ):
+        if curr_env.tag == "[SOLVED]" and curr_env.status == "SOLVED" and curr_env.content and            str(curr_env.content.get("verdict", "")).upper() == "ACCEPT" and curr_env.final_solution and prev_env.final_solution:
             prev_return = _final_return_value(prev_env) or ""
             curr_return = _final_return_value(curr_env) or ""
             ca = canonicalize_for_hash(prev_return, kind)
