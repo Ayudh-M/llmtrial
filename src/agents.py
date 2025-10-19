@@ -17,7 +17,7 @@ class Agent:
     system_prompt: str
     seed: int = 7
     max_new_tokens: int = 768
-    strategy_id: str = "strategy-01"
+    strategy_id: str = "S1"
 
     def __post_init__(self):
         self.tok, self.model = load_causal_lm(self.model_id, seed=self.seed)
