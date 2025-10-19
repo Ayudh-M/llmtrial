@@ -22,3 +22,5 @@ def test_tiny_model_loads_and_generates():
     )
     assert isinstance(output, str)
     assert output.strip()
+    if getattr(model, "offline_stub", False):
+        assert "offline tiny model" in output
