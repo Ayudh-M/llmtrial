@@ -53,11 +53,46 @@ def build_inputs(tokenizer, messages_or_text, add_generation_prompt: bool = True
     return tokenizer(prompt, return_tensors="pt").input_ids
 
 @torch.inference_mode()
+def _generate(
+    tokenizer,
+    model,
+    messages,
+    max_new_tokens: int = 256,
+    temperature: float = 0.0,
+    do_sample: Optional[bool] = None,
+    top_p: Optional[float] = None,
+    top_k: Optional[int] = None,
+):
 def _generate(tokenizer, model, messages, max_new_tokens=256, temperature=0.0, do_sample: Optional[bool]=None, **gen_kwargs):
     if do_sample is None:
         do_sample = bool(temperature and float(temperature) > 0.0)
     input_ids = build_inputs(tokenizer, messages, add_generation_prompt=True)
     input_ids = input_ids.to(model.device)
+    gen_kwargs: Dict[str, Any] = {
+        "do_sample": do_sample,
+        "temperature": float(temperature or 0.0),
+        "max_new_tokens": int(max_new_tokens or 256),
+    }
+    if top_p is not None:
+        gen_kwargs["top_p"] = float(top_p)
+    if top_k is not None:
+        gen_kwargs["top_k"] = int(top_k)
+    out = model.generate(
+        input_ids=input_ids,
+        **gen_kwargs,
+    )
+    return tokenizer.decode(out[0], skip_special_tokens=True)
+
+def generate_json_only(
+    tokenizer,
+    model,
+    messages: List[Dict[str, str]],
+    max_new_tokens: int = 256,
+    temperature: float = 0.0,
+    do_sample: Optional[bool] = None,
+    top_p: Optional[float] = None,
+    top_k: Optional[int] = None,
+) -> str:
     gen_kwargs.setdefault("max_new_tokens", int(max_new_tokens or 256))
     gen_kwargs.setdefault("temperature", float(temperature or 0.0))
     gen_kwargs.setdefault("do_sample", do_sample)
@@ -93,5 +128,7 @@ def generate_json_only(
         max_new_tokens=max_new_tokens,
         temperature=temperature,
         do_sample=do_sample,
+        top_p=top_p,
+        top_k=top_k,
         **decode_cfg,
     )

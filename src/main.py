@@ -188,7 +188,14 @@ def main() -> None:
     except KeyError:
         print("[error] Scenario is missing the 'strategy' field.", file=sys.stderr)
         sys.exit(2)
-    strategy = build_strategy(strat_cfg)
+    strat_overrides: Dict[str, Any] = {}
+    scenario_overrides = scenario.get("strategy_overrides")
+    if isinstance(scenario_overrides, dict):
+        strat_overrides.update(scenario_overrides)
+    for key in ("decoding", "json_envelope_schema", "max_rounds", "consensus_mode"):
+        if key in scenario and key not in strat_overrides:
+            strat_overrides[key] = scenario[key]
+    strategy = build_strategy(strat_cfg, overrides=strat_overrides)
 
     task_text: str = scenario.get("task", "")
     if not isinstance(task_text, str) or not task_text.strip():
@@ -209,6 +216,7 @@ def main() -> None:
             agent_b,
             max_rounds=strategy.max_rounds,
             kind=kind,
+            schema_validator=strategy.envelope_validator,
             strategy=strategy,
         )
     else:
@@ -262,6 +270,7 @@ def main() -> None:
             agent_b,
             max_rounds=strategy.max_rounds,
             kind=kind,
+            schema_validator=strategy.envelope_validator,
             strategy=strategy,
         )
 

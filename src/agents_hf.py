@@ -76,6 +76,19 @@ class HFChatAgent:
         usr = self.strategy.decorate_prompts(usr, {"agent": self.name})
         return [{"role":"system","content":sys}, {"role":"user","content":usr}]
 
+    def step(self, task: str, transcript: List[Dict[str, Any]]):
+        msgs = self._messages(task, transcript)
+        decoding = self.strategy.decoding or {}
+        raw = generate_json_only(
+            self.tokenizer,
+            self.model,
+            msgs,
+            max_new_tokens=decoding.get("max_new_tokens", 256),
+            temperature=decoding.get("temperature", 0.0),
+            do_sample=decoding.get("do_sample"),
+            top_p=decoding.get("top_p"),
+            top_k=decoding.get("top_k"),
+        )
         user_parts: List[str] = []
         if prep.get("user_prefix"):
             user_parts.append(str(prep["user_prefix"]))

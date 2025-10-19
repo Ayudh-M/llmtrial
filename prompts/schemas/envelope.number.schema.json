@@ -4,9 +4,7 @@
   "type": "object",
   "required": [
     "status",
-    "tag",
-    "content",
-    "final_solution"
+    "tag"
   ],
   "properties": {
     "status": {
@@ -21,10 +19,14 @@
       ]
     },
     "tag": {
-      "type": "string"
+      "type": "string",
+      "pattern": "^\\[(CONTACT|SOLVED)\\]$"
     },
     "content": {
-      "type": "object",
+      "type": [
+        "object",
+        "null"
+      ],
       "additionalProperties": true
     },
     "final_solution": {
@@ -35,7 +37,8 @@
       "properties": {
         "canonical_text": {
           "type": "string",
-          "pattern": "^-?\\d+(?:\\.\\d+)?$"
+          "pattern": "^-?\\d+(?:\\.\\d+)?$",
+          "minLength": 1
         },
         "sha256": {
           "type": [
@@ -65,5 +68,35 @@
       ]
     }
   },
-  "additionalProperties": true
+  "additionalProperties": true,
+  "allOf": [
+    {
+      "if": {
+        "properties": {
+          "status": {
+            "const": "SOLVED"
+          }
+        }
+      },
+      "then": {
+        "required": [
+          "final_solution"
+        ]
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "tag": {
+            "const": "[SOLVED]"
+          }
+        }
+      },
+      "then": {
+        "required": [
+          "final_solution"
+        ]
+      }
+    }
+  ]
 }

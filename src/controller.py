@@ -3,6 +3,8 @@ from typing import Dict, Any, Tuple, Optional, List, Callable
 from collections import Counter
 from dataclasses import asdict
 from typing import Dict, Any, Tuple, Optional, List
+
+from jsonschema import Draft7Validator
 import inspect
 from functools import lru_cache
 
@@ -15,6 +17,7 @@ from .canonicalize import canonicalize_for_hash
 from .utils import sha256_hex, parse_acl_message, ACLParseError
 from .utils import sha256_hex
 from .sanitize import repair_envelope
+from .json_enforcer import validate_envelope
 from .strategies import Strategy
 from .validators import get_validator
 
@@ -113,6 +116,14 @@ def _handshake_accept(prev_env: Envelope, curr_env: Envelope, kind: Optional[str
         pass
     return None
 
+def _enforce_schema(env: Envelope, validator: Optional[Draft7Validator], actor: str, round_no: int) -> None:
+    if not validator:
+        return
+    ok, errors = validate_envelope(env.model_dump(exclude_none=True), validator)
+    if ok:
+        return
+    details = "; ".join(errors) if errors else "unknown validation error"
+    raise ValueError(f"Schema validation failed for {actor} on round {round_no}: {details}")
 def _prepare_text_turn(obj: Any, validator: Optional[Callable[[str], str]]) -> Dict[str, Any]:
     if isinstance(obj, dict):
         text = obj.get("text") or obj.get("message") or obj.get("content") or ""
@@ -152,6 +163,8 @@ def run_controller(
     agent_b,
     max_rounds: int = 8,
     kind: Optional[str] = None,
+    schema_validator: Optional[Draft7Validator] = None,
+) -> Dict[str, Any]:
     strategy: Optional[Strategy] = None,
 ) -> Dict[str, Any]:
     transcript: List[Dict[str, Any]] = []
@@ -367,6 +380,8 @@ def run_controller(task: str, agent_a, agent_b, max_rounds: int = 8, kind: Optio
                 if ca == cb and ca != "":
                     return {"status": "CONSENSUS", "rounds": r, "canonical_text": ca, "sha256": ha, "transcript": transcript}
         env_a = _checked(env_a_raw)
+        _enforce_schema(env_a, schema_validator, getattr(agent_a, "name", "agent_a"), r)
+        transcript.append({"r": r, "actor": "a", "envelope": env_a.model_dump()})
         parsed_a = _parse_intent("A", env_a)
         if parsed_a:
             intent_counts["a"][parsed_a.intent] += 1
@@ -389,6 +404,7 @@ def run_controller(task: str, agent_a, agent_b, max_rounds: int = 8, kind: Optio
         # Agent B step
         env_b_raw, _ = agent_b.step(task, transcript)
         env_b = _checked(env_b_raw)
+        _enforce_schema(env_b, schema_validator, getattr(agent_b, "name", "agent_b"), r)
         parsed_b = _parse_intent("B", env_b)
         if parsed_b:
             intent_counts["b"][parsed_b.intent] += 1
