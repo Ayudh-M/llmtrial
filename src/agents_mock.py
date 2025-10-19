@@ -39,3 +39,27 @@ class MockAgent:
             "final_solution": {"canonical_text": self.solution_text},
         }
         return env, str(env)
+
+
+class ConciseTextAgent:
+    """Mock agent that speaks in short text snippets and optional final answer."""
+
+    def __init__(self, name: str, messages: List[str], final_answer: str):
+        self.name = name
+        self._messages = list(messages)
+        self._final_answer = final_answer
+        self._turn = 0
+
+    def step(self, task: str, transcript: List[Dict[str, Any]]) -> Tuple[Dict[str, Any], str]:
+        if self._turn < len(self._messages):
+            text = self._messages[self._turn]
+            self._turn += 1
+            payload = {"text": text}
+            return payload, text
+
+        payload = {
+            "text": f" Final: {self._final_answer}. ",
+            "final_solution": {"canonical_text": f" {self._final_answer} "},
+        }
+        self._turn += 1
+        return payload, payload["text"]

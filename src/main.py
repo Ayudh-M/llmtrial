@@ -203,7 +203,14 @@ def main() -> None:
         mock_solution = scenario.get("mock_solution", "TRUE")
         agent_a = MockAgent("A", solution_text=mock_solution)
         agent_b = MockAgent("B", solution_text=mock_solution)
-        result = run_controller(task_text, agent_a, agent_b, max_rounds=strategy.max_rounds, kind=kind)
+        result = run_controller(
+            task_text,
+            agent_a,
+            agent_b,
+            max_rounds=strategy.max_rounds,
+            kind=kind,
+            strategy=strategy,
+        )
     else:
         # Real models path: load roleset + models
         roleset_path = scenario.get("roleset")
@@ -249,7 +256,14 @@ def main() -> None:
         agent_b = HFChatAgent(name_b, sys_b, tok_b, mdl_b, strategy)
 
         # Controller
-        result = run_controller(task_text, agent_a, agent_b, max_rounds=strategy.max_rounds, kind=kind)
+        result = run_controller(
+            task_text,
+            agent_a,
+            agent_b,
+            max_rounds=strategy.max_rounds,
+            kind=kind,
+            strategy=strategy,
+        )
 
     # 3) Persist artifact
     out_prefix = f"{_now_stamp()}_{args.scenario}"

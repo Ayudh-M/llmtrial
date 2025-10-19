@@ -1,4 +1,5 @@
 from __future__ import annotations
+from typing import Dict, Any, Tuple, Optional, List, Callable
 from collections import Counter
 from dataclasses import asdict
 from typing import Dict, Any, Tuple, Optional, List
@@ -15,6 +16,7 @@ from .utils import sha256_hex, parse_acl_message, ACLParseError
 from .utils import sha256_hex
 from .sanitize import repair_envelope
 from .strategies import Strategy
+from .validators import get_validator
 
 
 @lru_cache(None)
@@ -111,6 +113,55 @@ def _handshake_accept(prev_env: Envelope, curr_env: Envelope, kind: Optional[str
         pass
     return None
 
+def _prepare_text_turn(obj: Any, validator: Optional[Callable[[str], str]]) -> Dict[str, Any]:
+    if isinstance(obj, dict):
+        text = obj.get("text") or obj.get("message") or obj.get("content") or ""
+        final = obj.get("final_solution") or obj.get("final_answer")
+        meta = obj.get("meta") if isinstance(obj.get("meta"), dict) else {}
+    else:
+        text = str(obj or "")
+        final = None
+        meta = {}
+
+    if validator:
+        try:
+            text = validator(text)
+        except ValueError:
+            text = text.strip()
+    else:
+        text = text.strip()
+
+    final_text = ""
+    if isinstance(final, dict):
+        final_text = str(final.get("canonical_text") or final.get("text") or "").strip()
+    elif isinstance(final, str):
+        final_text = final.strip()
+
+    fs = {"canonical_text": final_text} if final_text else None
+    payload = {"text": text}
+    if fs:
+        payload["final_solution"] = fs
+    if meta:
+        payload["meta"] = meta
+    return payload
+
+
+def run_controller(
+    task: str,
+    agent_a,
+    agent_b,
+    max_rounds: int = 8,
+    kind: Optional[str] = None,
+    strategy: Optional[Strategy] = None,
+) -> Dict[str, Any]:
+    transcript: List[Dict[str, Any]] = []
+    text_mode = bool(strategy and not strategy.envelope_required)
+    validator: Optional[Callable[[str], str]] = None
+    if text_mode and strategy and strategy.validator_id:
+        validator = get_validator(strategy.validator_id, strategy.validator_params)
+
+    last_a: Optional[Any] = None
+    last_b: Optional[Any] = None
 
 def run_controller(task: str, agent_a, agent_b, max_rounds: int = 8, kind: Optional[str] = None) -> Dict[str, Any]:
     transcript: List[Dict[str, Any]] = []
@@ -264,6 +315,57 @@ def run_controller(task: str, agent_a, agent_b, max_rounds: int = 8, kind: Optio
 
         # Agent A step
         env_a_raw, _ = agent_a.step(task, transcript)
+        if text_mode:
+            env_a = _prepare_text_turn(env_a_raw, validator)
+            transcript.append({"r": r, "actor": "a", "envelope": env_a})
+        else:
+            env_a = _checked(env_a_raw)
+            transcript.append({"r": r, "actor": "a", "envelope": env_a.model_dump()})
+
+        # Agent B step
+        env_b_raw, _ = agent_b.step(task, transcript)
+        if text_mode:
+            env_b = _prepare_text_turn(env_b_raw, validator)
+            transcript.append({"r": r, "actor": "b", "envelope": env_b})
+        else:
+            env_b = _checked(env_b_raw)
+            transcript.append({"r": r, "actor": "b", "envelope": env_b.model_dump()})
+
+        if text_mode:
+            final_a = (env_a.get("final_solution") or {}).get("canonical_text") if isinstance(env_a, dict) else None
+            final_b = (env_b.get("final_solution") or {}).get("canonical_text") if isinstance(env_b, dict) else None
+            if final_a and final_b:
+                ca, ha = _canon_and_hash(final_a, kind)
+                cb, hb = _canon_and_hash(final_b, kind)
+                if ca == cb and ca != "":
+                    return {
+                        "status": "CONSENSUS",
+                        "rounds": r,
+                        "canonical_text": ca,
+                        "sha256": ha,
+                        "transcript": transcript,
+                    }
+        else:
+            # Handshake acceptance paths (either direction)
+            if last_b:
+                canon = _handshake_accept(last_b, env_a, kind)
+                if canon is not None:
+                    c, h = _canon_and_hash(canon, kind)
+                    return {"status": "CONSENSUS", "rounds": r, "canonical_text": c, "sha256": h, "transcript": transcript}
+            if last_a:
+                canon = _handshake_accept(last_a, env_b, kind)
+                if canon is not None:
+                    c, h = _canon_and_hash(canon, kind)
+                    return {"status": "CONSENSUS", "rounds": r, "canonical_text": c, "sha256": h, "transcript": transcript}
+
+            # Equality fallback if both produced final solutions this round
+            final_a = env_a.final_solution.canonical_text if (env_a.final_solution and env_a.final_solution.canonical_text) else None
+            final_b = env_b.final_solution.canonical_text if (env_b.final_solution and env_b.final_solution.canonical_text) else None
+            if final_a and final_b:
+                ca, ha = _canon_and_hash(final_a, kind)
+                cb, hb = _canon_and_hash(final_b, kind)
+                if ca == cb and ca != "":
+                    return {"status": "CONSENSUS", "rounds": r, "canonical_text": ca, "sha256": ha, "transcript": transcript}
         env_a = _checked(env_a_raw)
         parsed_a = _parse_intent("A", env_a)
         if parsed_a:
