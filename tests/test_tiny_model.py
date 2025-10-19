@@ -1,16 +1,24 @@
-import os, pytest
-from src.model_loader import load_model_and_tokenizer, TINY_REPO
-from src.agents_hf import HFChatAgent
-from src.strategies import Strategy
-from src.controller import run_controller
+import pytest
+
+from src.model_loader import TINY_MODEL_ID, generate_chat_completion, load_causal_lm
+
 
 @pytest.mark.integration
-def test_tinystories_runs_greedy():
+def test_tiny_model_loads_and_generates():
     try:
-        tok, mdl = load_model_and_tokenizer(TINY_REPO, dtype="fp32")
-    except Exception as e:
-        pytest.skip(f"Tokenizer/model not available: {e}")
-    sys = "You are an agent that must output ONLY a JSON object with tag and status. When confident, solve."
-    agent = HFChatAgent("A", sys, tok, mdl, Strategy(name="S1", json_only=True, max_rounds=2, decoding={'temperature':0.0,'max_new_tokens':64}))
-    env, raw = agent.step("Return ONLY JSON", [])
-    assert isinstance(raw, str)
+        tokenizer, model = load_causal_lm(TINY_MODEL_ID, dtype="fp32", device_map="cpu")
+    except Exception as exc:  # pragma: no cover - depends on environment
+        pytest.skip(f"Tiny model unavailable: {exc}")
+
+    messages = [
+        {"role": "system", "content": "You are echo."},
+        {"role": "user", "content": "Say hello"},
+    ]
+    output = generate_chat_completion(
+        tokenizer,
+        model,
+        messages,
+        decoding={"max_new_tokens": 4, "temperature": 0.0},
+    )
+    assert isinstance(output, str)
+    assert output.strip()

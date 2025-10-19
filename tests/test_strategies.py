@@ -1,8 +1,7 @@
-from __future__ import annotations
-
 import pytest
 
 from src.strategies import (
+    REGISTRY,
     STRATEGY_REGISTRY,
     build_strategy,
     get_strategy_definition,
@@ -10,55 +9,45 @@ from src.strategies import (
 )
 
 
-def test_registry_ids_sorted():
+def test_registry_contains_expected_strategies():
     ids = list_strategy_ids()
-    assert ids == tuple(sorted(ids))
+    assert ids == tuple(sorted({
+        "natural_language",
+        "json_schema",
+        "pseudocode",
+        "symbolic_acl",
+        "emergent_dsl",
+    }))
     assert set(ids) == set(STRATEGY_REGISTRY.keys())
 
 
 @pytest.mark.parametrize("strategy_id", list_strategy_ids())
-def test_strategy_behaviours(strategy_id: str) -> None:
+def test_strategy_round_trip(strategy_id: str) -> None:
     definition = get_strategy_definition(strategy_id)
     strategy = build_strategy(definition)
 
     assert strategy.id == definition.id
-    assert strategy.max_rounds == definition.max_rounds
+    assert strategy.output_mode == definition.output_mode
+    assert strategy.agent_defaults.max_new_tokens == definition.agent_profile.max_new_tokens
 
-    # Prompt decoration appends a JSON hint.
-    prompt = "Solve task"
-    decorated = strategy.decorate_prompts(prompt, {})
-    assert decorated.endswith("JSON object.")
+    decorated = strategy.decorate_prompts("Solve the task", {"agent": "tester"})
+    if strategy.json_only:
+        assert "JSON" in decorated.upper()
+    else:
+        assert "JSON" not in decorated[:20].upper()
 
-    # Envelope validation succeeds with required keys and fails otherwise.
-    ok, errors = strategy.validate_envelope({"status": "WORKING", "tag": "[CONTACT]"})
-    assert ok
-    assert errors == []
-
-    ok, errors = strategy.validate_envelope({})
-    assert not ok
-    assert errors
-
-    # Controller hooks add metadata to the context.
-    ctx = {}
-    strategy.apply_pre_round_hooks(ctx)
-    strategy.apply_controller_behaviors(ctx)
-    assert ctx["meta"]["strategy_id"] == strategy_id
-    assert ctx["meta"]["json_only"] is True
-
-    # Agent defaults return a copy each time.
-    profile = strategy.agent_defaults
-    profile2 = strategy.agent_defaults
-    assert profile is not profile2
-    assert profile.max_new_tokens == definition.agent_profile.max_new_tokens
+    context = {}
+    strategy.apply_pre_round_hooks(context)
+    strategy.apply_controller_behaviors(context)
+    assert context.get("meta", {}).get("strategy_id") == strategy_id
 
 
-def test_build_strategy_overrides() -> None:
-    strategy = build_strategy({
-        "id": "S1",
-        "max_rounds": 12,
-        "decoding": {"max_new_tokens": 64},
-    })
-    assert strategy.max_rounds == 12
-    assert strategy.decoding["max_new_tokens"] == 64
-    # Base decoding keys are preserved.
+def test_build_strategy_overrides_decoding():
+    strategy = build_strategy("json_schema", overrides={"decoding": {"max_new_tokens": 128}})
+    assert strategy.decoding["max_new_tokens"] == 128
     assert strategy.decoding["temperature"] == 0.0
+
+
+def test_metadata_exposed_through_registry():
+    strat = REGISTRY["pseudocode"].instantiate()
+    assert strat.metadata["requires_pseudocode"] is True

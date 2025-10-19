@@ -1,619 +1,185 @@
 from __future__ import annotations
-from typing import Dict, Any, Tuple, Optional, List, Callable
+
+"""Conversation controller orchestrating two agents under a strategy."""
+
 from collections import Counter
-from dataclasses import asdict
-from typing import Dict, Any, Tuple, Optional, List
+from typing import Any, Dict, List, MutableMapping, Optional, Tuple
 
-from jsonschema import Draft7Validator
-import inspect
-from functools import lru_cache
-
-
-from .strategies import Strategy
-from pydantic import ValidationError
-
-from .schemas import Envelope
-from .canonicalize import canonicalize_for_hash
-from .utils import sha256_hex
-from .sanitize import repair_envelope
-from .dsl import DSLValidator, DSLValidationError, DSLParseResult
-from .utils import sha256_hex, parse_acl_message, ACLParseError
-from .utils import sha256_hex
-from .sanitize import repair_envelope
 from .json_enforcer import validate_envelope
-from .strategies import Strategy
-from .validators import get_validator
-
-
-@lru_cache(None)
-def _step_accepts_preparation(agent_cls) -> bool:
-    try:
-        sig = inspect.signature(agent_cls.step)
-    except (TypeError, ValueError):
-        return False
-    for param in sig.parameters.values():
-        if param.kind == inspect.Parameter.VAR_KEYWORD:
-            return True
-        if param.name == "preparation" and param.kind in (
-            inspect.Parameter.POSITIONAL_OR_KEYWORD,
-            inspect.Parameter.KEYWORD_ONLY,
-        ):
-            return True
-    return False
+from .pseudocode import PseudocodeValidationError, validate_and_normalise_pseudocode
+from .schemas import Envelope
+from .strategies import Strategy, build_strategy
+from .utils import (
+    ACLParseError,
+    normalize_text,
+    parse_acl_message,
+    parse_dsl_message,
+    sha256_hex,
+)
 
 
 def _strategy_for(agent) -> Strategy:
-    strat = getattr(agent, "strategy", None)
-    return strat if isinstance(strat, Strategy) else Strategy(name=getattr(agent, "name", "agent"))
+    strategy = getattr(agent, "strategy", None)
+    if isinstance(strategy, Strategy):
+        return strategy
+    strategy_id = getattr(agent, "strategy_id", None) or "json_schema"
+    return build_strategy(strategy_id)
 
 
-def _call_step(agent, task: str, transcript: List[Dict[str, Any]], preparation: Dict[str, Any]):
-    if _step_accepts_preparation(type(agent)):
-        return agent.step(task, transcript, preparation=preparation)
-    return agent.step(task, transcript)
-from .pseudocode import validate_and_normalise_pseudocode, PseudocodeValidationError
+def _prepare_context(strategy: Strategy, actor_label: str, round_index: int) -> MutableMapping[str, Any]:
+    ctx: MutableMapping[str, Any] = {"round": round_index, "actor": actor_label, "meta": {}}
+    strategy.apply_pre_round_hooks(ctx)
+    strategy.apply_controller_behaviors(ctx)
+    return ctx
 
 
-def _checked(
-    env_dict: Dict[str, Any],
-    dsl_validator: Optional[DSLValidator],
-) -> Tuple[Envelope, Dict[str, Any], Optional[DSLParseResult]]:
-    candidate = dict(env_dict) if isinstance(env_dict, dict) else {}
-    try:
-        env = Envelope.model_validate(candidate)
-    except ValidationError:
-        repaired = repair_envelope(candidate)
-        env = Envelope.model_validate(repaired)
-        candidate = repaired
-    else:
-        candidate = dict(candidate)
+def _record_acl_intent(analytics: Dict[str, Counter], actor_key: str, acl_text: str) -> Dict[str, Any]:
+    parsed = parse_acl_message(acl_text)
+    analytics.setdefault(actor_key, Counter())[parsed.intent] += 1
+    return {"intent": parsed.intent, "content": parsed.content, "next_action": parsed.next_action}
 
-    parsed: Optional[DSLParseResult] = None
-    if dsl_validator is not None:
+
+def _process_json_message(
+    strategy: Strategy,
+    message: Dict[str, Any],
+    *,
+    actor_key: str,
+    analytics: Dict[str, Counter],
+    schema_validator,
+) -> Tuple[Dict[str, Any], Dict[str, Any]]:
+    ok, errors = strategy.validate_envelope(message)
+    if not ok:
+        raise ValueError(
+            f"Strategy '{strategy.id}' envelope validation failed: {'; '.join(errors)}"
+        )
+
+    envelope = Envelope.model_validate(message)
+    payload = envelope.model_dump(exclude_none=True)
+    payload.setdefault("meta", {})["strategy_id"] = strategy.id
+
+    if schema_validator is not None:
+        valid, schema_errors = validate_envelope(payload, schema_validator)
+        if not valid:
+            raise ValueError(
+                f"Schema validation failed for strategy '{strategy.id}': {'; '.join(schema_errors)}"
+            )
+
+    extras: Dict[str, Any] = {}
+
+    if strategy.metadata.get("requires_acl"):
+        acl_text = (payload.get("content") or {}).get("acl", "")
+        if not isinstance(acl_text, str):
+            raise ValueError("ACL content must be a string when the strategy requires ACL messages.")
         try:
-            parsed = dsl_validator.validate(candidate)
-        except DSLValidationError as exc:
-            if exc.envelope is None:
-                exc.envelope = candidate
-            raise
-    return env, dict(candidate), parsed
+            extras["acl"] = _record_acl_intent(analytics, actor_key, acl_text)
+        except ACLParseError as exc:
+            raise ValueError(f"Invalid ACL message from agent {actor_key}: {exc}") from exc
+
+    if strategy.metadata.get("requires_pseudocode") and payload.get("final_solution"):
+        canonical = payload["final_solution"].get("canonical_text", "")
+        if canonical:
+            try:
+                normalised, return_value = validate_and_normalise_pseudocode(canonical)
+            except PseudocodeValidationError as exc:
+                raise ValueError(f"Invalid pseudocode from agent {actor_key}: {exc}") from exc
+            payload.setdefault("final_solution", {})["canonical_text"] = normalised
+            payload["final_solution"]["return_value"] = return_value
+
+    return payload, extras
 
 
-
-def _apply_pseudocode(env: Envelope) -> Envelope:
-    fs = env.final_solution
-    if fs and isinstance(fs.canonical_text, str) and fs.canonical_text.strip():
-        try:
-            normalized, final_return = validate_and_normalise_pseudocode(fs.canonical_text)
-            fs.canonical_text = normalized
-            setattr(fs, "return_value", final_return)
-        except PseudocodeValidationError as exc:
-            setattr(fs, "return_value", "")
-            env.content = env.content or {}
-            env.content.setdefault("pseudocode_error", str(exc))
-    return env
-
-
-def _final_return_value(env: Envelope) -> Optional[str]:
-    if env.final_solution is None:
-        return None
-    ret = getattr(env.final_solution, "return_value", None)
-    if isinstance(ret, str) and ret.strip():
-        return ret.strip()
-    text = env.final_solution.canonical_text or ""
-    return text.strip() or None
-
-def _canon_and_hash(text: str, kind: Optional[str]) -> Tuple[str, str]:
-    c = canonicalize_for_hash(text or "", kind)
-    return c, sha256_hex(c)
-
-
-def _parse_intent(actor_label: str, env: Envelope):
-    content = env.content or {}
-    if content is None:
-        return None
-    if not isinstance(content, dict):
-        raise ValueError(f"Agent {actor_label} content must be an object with an 'acl' field.")
-    acl = content.get("acl")
-    if acl is None:
-        return None
-    try:
-        return parse_acl_message(acl)
-    except ACLParseError as exc:
-        raise ValueError(f"Invalid ACL message from agent {actor_label}: {exc}") from exc
-
-
-def _intent_summary(intent_counts: Dict[str, Counter]) -> Dict[str, Any]:
-    return {"intent_counts": {actor: dict(counter) for actor, counter in intent_counts.items()}}
-def _handshake_accept(prev_env: Envelope, curr_env: Envelope, kind: Optional[str]) -> Optional[str]:
-    """If curr_env is a SOLVED+ACCEPT that copies prev_env's canonical result, return canonical; else None."""
-    try:
-        if (
-            curr_env.tag == "[SOLVED]"
-            and curr_env.status == "SOLVED"
-            and curr_env.content
-            and str(curr_env.content.get("verdict", "")).upper() == "ACCEPT"
-            and curr_env.final_solution
-            and prev_env.final_solution
-        ):
-            ca = canonicalize_for_hash(prev_env.final_solution.canonical_text, kind)
-            cb = canonicalize_for_hash(curr_env.final_solution.canonical_text, kind)
-        if curr_env.tag == "[SOLVED]" and curr_env.status == "SOLVED" and curr_env.content and            str(curr_env.content.get("verdict", "")).upper() == "ACCEPT" and curr_env.final_solution and prev_env.final_solution:
-            prev_return = _final_return_value(prev_env) or ""
-            curr_return = _final_return_value(curr_env) or ""
-            ca = canonicalize_for_hash(prev_return, kind)
-            cb = canonicalize_for_hash(curr_return, kind)
-            if ca == cb and ca != "":
-                return ca
-    except Exception:
-        pass
-    return None
-
-def _enforce_schema(env: Envelope, validator: Optional[Draft7Validator], actor: str, round_no: int) -> None:
-    if not validator:
-        return
-    ok, errors = validate_envelope(env.model_dump(exclude_none=True), validator)
-    if ok:
-        return
-    details = "; ".join(errors) if errors else "unknown validation error"
-    raise ValueError(f"Schema validation failed for {actor} on round {round_no}: {details}")
-def _prepare_text_turn(obj: Any, validator: Optional[Callable[[str], str]]) -> Dict[str, Any]:
-    if isinstance(obj, dict):
-        text = obj.get("text") or obj.get("message") or obj.get("content") or ""
-        final = obj.get("final_solution") or obj.get("final_answer")
-        meta = obj.get("meta") if isinstance(obj.get("meta"), dict) else {}
-    else:
-        text = str(obj or "")
-        final = None
-        meta = {}
-
-    if validator:
-        try:
-            text = validator(text)
-        except ValueError:
-            text = text.strip()
-    else:
-        text = text.strip()
-
-    final_text = ""
-    if isinstance(final, dict):
-        final_text = str(final.get("canonical_text") or final.get("text") or "").strip()
-    elif isinstance(final, str):
-        final_text = final.strip()
-
-    fs = {"canonical_text": final_text} if final_text else None
-    payload = {"text": text}
-    if fs:
-        payload["final_solution"] = fs
-    if meta:
-        payload["meta"] = meta
-    return payload
+def _process_text_message(strategy: Strategy, message: Any) -> Tuple[str, Dict[str, Any]]:
+    text = normalize_text(message)
+    extras: Dict[str, Any] = {}
+    if strategy.metadata.get("requires_dsl"):
+        extras["dsl"] = parse_dsl_message(text)
+    return text, extras
 
 
 def run_controller(
     task: str,
     agent_a,
     agent_b,
-    max_rounds: int = 8,
-    kind: Optional[str] = None,
-    dsl_validator: Optional[DSLValidator] = None,
+    *,
+    max_rounds: Optional[int] = None,
+    schema_validator=None,
 ) -> Dict[str, Any]:
-    transcript: List[Dict[str, Any]] = []
-    dsl_trace: List[Dict[str, Any]] = []
-    schema_validator: Optional[Draft7Validator] = None,
-) -> Dict[str, Any]:
-    strategy: Optional[Strategy] = None,
-) -> Dict[str, Any]:
-    transcript: List[Dict[str, Any]] = []
-    text_mode = bool(strategy and not strategy.envelope_required)
-    validator: Optional[Callable[[str], str]] = None
-    if text_mode and strategy and strategy.validator_id:
-        validator = get_validator(strategy.validator_id, strategy.validator_params)
-
-    last_a: Optional[Any] = None
-    last_b: Optional[Any] = None
-
-def run_controller(task: str, agent_a, agent_b, max_rounds: int = 8, kind: Optional[str] = None) -> Dict[str, Any]:
-    transcript: List[Dict[str, Any]] = []
-    solved_text: Dict[str, Optional[str]] = {"a": None, "b": None}
-    intent_counts: Dict[str, Counter] = {"a": Counter(), "b": Counter()}
-
-    def maybe_finish(round_idx: int) -> Optional[Dict[str, Any]]:
-        text_a = solved_text.get("a")
-        text_b = solved_text.get("b")
-        if text_a and text_b:
-            ca, ha = _canon_and_hash(text_a, kind)
-            cb, hb = _canon_and_hash(text_b, kind)
-            if ca == cb and ca != "":
-                return {
-                    "status": "CONSENSUS",
-                    "rounds": round_idx,
-                    "canonical_text": ca,
-                    "sha256": ha,
-                    "transcript": transcript,
-                    "analytics": _intent_summary(intent_counts),
-                }
-        return None
-    last_a: Optional[Envelope] = None
-    last_b: Optional[Envelope] = None
-    strategy: Optional[Strategy] = None
-
-    strat_a = getattr(agent_a, "strategy", None)
-    strat_b = getattr(agent_b, "strategy", None)
-    if strat_a is not None and strat_a is strat_b:
-        strategy = strat_a
-
-    controller_ctx: Dict[str, Any] = {"task": task, "kind": kind, "transcript": transcript}
-
     strategy_a = _strategy_for(agent_a)
     strategy_b = _strategy_for(agent_b)
-    eff_max_rounds = min(max_rounds, strategy_a.max_rounds or max_rounds, strategy_b.max_rounds or max_rounds)
+    total_rounds = max_rounds or max(strategy_a.max_rounds, strategy_b.max_rounds)
 
-    for r in range(1, eff_max_rounds + 1):
-        # Agent A step
-        prep_a = strategy_a.prepare_prompt(
-            task,
-            transcript,
-            actor="a",
-            agent_name=getattr(agent_a, "name", "agent_a"),
-        )
-        env_a_raw, raw_a = _call_step(agent_a, task, transcript, prep_a)
-        env_a_checked = _checked(env_a_raw)
-        validation_a = strategy_a.validate_message(
-            env_a_checked,
-            raw=raw_a,
-            original=env_a_raw,
-            transcript=transcript,
-            actor="a",
-            agent_name=getattr(agent_a, "name", "agent_a"),
-        )
-        env_a_processed, post_meta_a = strategy_a.postprocess(
-            env_a_checked,
-            raw=raw_a,
-            validation=validation_a,
-            transcript=transcript,
-            actor="a",
-            agent_name=getattr(agent_a, "name", "agent_a"),
-        )
-        env_a = env_a_processed if isinstance(env_a_processed, Envelope) else _checked(env_a_processed)
-        stop_a, reason_a = strategy_a.should_stop(
-            env_a,
-            validation=validation_a,
-            transcript=transcript,
-            actor="a",
-            agent_name=getattr(agent_a, "name", "agent_a"),
-        )
-        transcript.append(
-            {
-                "r": r,
-                "actor": "a",
-                "envelope": env_a.model_dump(),
-                "raw": raw_a,
+    transcript: List[Dict[str, Any]] = []
+    analytics: Dict[str, Counter] = {"a": Counter(), "b": Counter()}
+    final_json: Dict[str, str] = {}
+    final_text: Dict[str, str] = {}
+    final_entries: Dict[str, Dict[str, Any]] = {}
+
+    agents = [(agent_a, strategy_a, "a"), (agent_b, strategy_b, "b")]
+
+    for round_index in range(1, total_rounds + 1):
+        for agent, strategy, actor_key in agents:
+            context = _prepare_context(strategy, actor_key, round_index)
+            message, raw = agent.step(task, transcript)
+
+            entry: Dict[str, Any] = {
+                "round": round_index,
+                "actor": getattr(agent, "name", actor_key),
+                "actor_key": actor_key,
                 "strategy": {
-                    "name": strategy_a.name,
-                    "max_rounds": strategy_a.max_rounds,
-                    "decoding": strategy_a.decoding,
-                    "metadata": getattr(strategy_a, "metadata", {}),
-                    "hooks": {
-                        "prepare": prep_a,
-                        "validation": validation_a,
-                        "postprocess": post_meta_a,
-                        "should_stop": {"stop": stop_a, "reason": reason_a},
-                    },
+                    "id": strategy.id,
+                    "name": strategy.name,
+                    "metadata": strategy.metadata,
                 },
+                "raw": raw,
+                "context": context,
             }
-        )
 
-        # Agent B step
-        prep_b = strategy_b.prepare_prompt(
-            task,
-            transcript,
-            actor="b",
-            agent_name=getattr(agent_b, "name", "agent_b"),
-        )
-        env_b_raw, raw_b = _call_step(agent_b, task, transcript, prep_b)
-        env_b_checked = _checked(env_b_raw)
-        validation_b = strategy_b.validate_message(
-            env_b_checked,
-            raw=raw_b,
-            original=env_b_raw,
-            transcript=transcript,
-            actor="b",
-            agent_name=getattr(agent_b, "name", "agent_b"),
-        )
-        env_b_processed, post_meta_b = strategy_b.postprocess(
-            env_b_checked,
-            raw=raw_b,
-            validation=validation_b,
-            transcript=transcript,
-            actor="b",
-            agent_name=getattr(agent_b, "name", "agent_b"),
-        )
-        env_b = env_b_processed if isinstance(env_b_processed, Envelope) else _checked(env_b_processed)
-        stop_b, reason_b = strategy_b.should_stop(
-            env_b,
-            validation=validation_b,
-            transcript=transcript,
-            actor="b",
-            agent_name=getattr(agent_b, "name", "agent_b"),
-        )
-        transcript.append(
-            {
-                "r": r,
-                "actor": "b",
-                "envelope": env_b.model_dump(),
-                "raw": raw_b,
-                "strategy": {
-                    "name": strategy_b.name,
-                    "max_rounds": strategy_b.max_rounds,
-                    "decoding": strategy_b.decoding,
-                    "metadata": getattr(strategy_b, "metadata", {}),
-                    "hooks": {
-                        "prepare": prep_b,
-                        "validation": validation_b,
-                        "postprocess": post_meta_b,
-                        "should_stop": {"stop": stop_b, "reason": reason_b},
-                    },
-                },
-            }
-        )
-    for r in range(1, max_rounds + 1):
-        if strategy:
-            controller_ctx["round"] = r
-            controller_ctx["transcript"] = transcript
-            strategy.apply_pre_round_hooks(controller_ctx)
+            if strategy.json_only:
+                if not isinstance(message, dict):
+                    raise TypeError(
+                        f"Agent '{entry['actor']}' returned non-dict payload under JSON strategy."
+                    )
+                payload, extras = _process_json_message(
+                    strategy,
+                    message,
+                    actor_key=actor_key,
+                    analytics=analytics,
+                    schema_validator=schema_validator,
+                )
+                entry["envelope"] = payload
+                entry["strategy"].update(extras)
+                final_solution = payload.get("final_solution") if isinstance(payload, dict) else None
+                if isinstance(final_solution, dict) and final_solution.get("canonical_text"):
+                    final_json[actor_key] = final_solution["canonical_text"]
+                final_entries[actor_key] = entry
+            else:
+                text, extras = _process_text_message(strategy, message)
+                entry["text"] = text
+                entry["strategy"].update(extras)
+                final_text[actor_key] = text
+                final_entries[actor_key] = entry
 
-        # Agent A step
-        env_a_raw, _ = agent_a.step(task, transcript)
-        try:
-            env_a, env_a_data, parse_a = _checked(env_a_raw, dsl_validator)
-        except DSLValidationError as err:
-            envelope = err.envelope if isinstance(err.envelope, dict) else {}
-            transcript.append({"r": r, "actor": "a", "envelope": envelope, "errors": list(err.errors)})
-            if dsl_validator is not None:
-                dsl_trace.append({
-                    "round": r,
-                    "actor": "a",
-                    "errors": list(err.errors),
-                    "grammar_sha256": dsl_validator.grammar_sha256,
-                })
-            return {
-                "status": "INVALID_DSL",
-                "rounds": r,
-                "offender": "a",
-                "errors": list(err.errors),
-                "transcript": transcript,
-                "dsl_trace": dsl_trace,
-                "final_message": None,
-            }
-        transcript.append({"r": r, "actor": "a", "envelope": env_a_data})
-        if parse_a is not None:
-            dsl_trace.append(parse_a.to_trace_entry(r, "a"))
+            transcript.append(entry)
 
-        # Agent B step
-        env_b_raw, _ = agent_b.step(task, transcript)
-        try:
-            env_b, env_b_data, parse_b = _checked(env_b_raw, dsl_validator)
-        except DSLValidationError as err:
-            envelope = err.envelope if isinstance(err.envelope, dict) else {}
-            transcript.append({"r": r, "actor": "b", "envelope": envelope, "errors": list(err.errors)})
-            if dsl_validator is not None:
-                dsl_trace.append({
-                    "round": r,
-                    "actor": "b",
-                    "errors": list(err.errors),
-                    "grammar_sha256": dsl_validator.grammar_sha256,
-                })
-            return {
-                "status": "INVALID_DSL",
-                "rounds": r,
-                "offender": "b",
-                "errors": list(err.errors),
-                "transcript": transcript,
-                "dsl_trace": dsl_trace,
-                "final_message": None,
-            }
-        transcript.append({"r": r, "actor": "b", "envelope": env_b_data})
-        if parse_b is not None:
-            dsl_trace.append(parse_b.to_trace_entry(r, "b"))
-        if text_mode:
-            env_a = _prepare_text_turn(env_a_raw, validator)
-            transcript.append({"r": r, "actor": "a", "envelope": env_a})
-        else:
-            env_a = _checked(env_a_raw)
-            transcript.append({"r": r, "actor": "a", "envelope": env_a.model_dump()})
+    status = "NO_CONSENSUS"
+    canonical_text: Optional[str] = None
+    if final_json.get("a") and final_json.get("b") and final_json["a"] == final_json["b"]:
+        canonical_text = final_json["a"]
+        status = "CONSENSUS"
+    elif final_text.get("a") and final_text.get("b") and final_text["a"] == final_text["b"]:
+        canonical_text = final_text["a"]
+        status = "CONSENSUS"
 
-        # Agent B step
-        env_b_raw, _ = agent_b.step(task, transcript)
-        if text_mode:
-            env_b = _prepare_text_turn(env_b_raw, validator)
-            transcript.append({"r": r, "actor": "b", "envelope": env_b})
-        else:
-            env_b = _checked(env_b_raw)
-            transcript.append({"r": r, "actor": "b", "envelope": env_b.model_dump()})
-
-        if text_mode:
-            final_a = (env_a.get("final_solution") or {}).get("canonical_text") if isinstance(env_a, dict) else None
-            final_b = (env_b.get("final_solution") or {}).get("canonical_text") if isinstance(env_b, dict) else None
-            if final_a and final_b:
-                ca, ha = _canon_and_hash(final_a, kind)
-                cb, hb = _canon_and_hash(final_b, kind)
-                if ca == cb and ca != "":
-                    return {
-                        "status": "CONSENSUS",
-                        "rounds": r,
-                        "canonical_text": ca,
-                        "sha256": ha,
-                        "transcript": transcript,
-                    }
-        else:
-            # Handshake acceptance paths (either direction)
-            if last_b:
-                canon = _handshake_accept(last_b, env_a, kind)
-                if canon is not None:
-                    c, h = _canon_and_hash(canon, kind)
-                    return {"status": "CONSENSUS", "rounds": r, "canonical_text": c, "sha256": h, "transcript": transcript}
-            if last_a:
-                canon = _handshake_accept(last_a, env_b, kind)
-                if canon is not None:
-                    c, h = _canon_and_hash(canon, kind)
-                    return {"status": "CONSENSUS", "rounds": r, "canonical_text": c, "sha256": h, "transcript": transcript}
-
-            # Equality fallback if both produced final solutions this round
-            final_a = env_a.final_solution.canonical_text if (env_a.final_solution and env_a.final_solution.canonical_text) else None
-            final_b = env_b.final_solution.canonical_text if (env_b.final_solution and env_b.final_solution.canonical_text) else None
-            if final_a and final_b:
-                ca, ha = _canon_and_hash(final_a, kind)
-                cb, hb = _canon_and_hash(final_b, kind)
-                if ca == cb and ca != "":
-                    return {"status": "CONSENSUS", "rounds": r, "canonical_text": ca, "sha256": ha, "transcript": transcript}
-        env_a = _checked(env_a_raw)
-        _enforce_schema(env_a, schema_validator, getattr(agent_a, "name", "agent_a"), r)
-        transcript.append({"r": r, "actor": "a", "envelope": env_a.model_dump()})
-        parsed_a = _parse_intent("A", env_a)
-        if parsed_a:
-            intent_counts["a"][parsed_a.intent] += 1
-        transcript.append({
-            "r": r,
-            "actor": "a",
-            "intent": parsed_a.intent if parsed_a else None,
-            "acl": asdict(parsed_a) if parsed_a else None,
-            "envelope": env_a.model_dump(),
-        })
-        if env_a.is_solved() and parsed_a and parsed_a.intent == "SOLVED":
-            solved_text["a"] = env_a.final_solution.canonical_text or ""
-        else:
-            solved_text["a"] = None
-
-        maybe = maybe_finish(r)
-        if maybe:
-            return maybe
-
-        # Agent B step
-        env_b_raw, _ = agent_b.step(task, transcript)
-        env_b = _checked(env_b_raw)
-        _enforce_schema(env_b, schema_validator, getattr(agent_b, "name", "agent_b"), r)
-        parsed_b = _parse_intent("B", env_b)
-        if parsed_b:
-            intent_counts["b"][parsed_b.intent] += 1
-        transcript.append({
-            "r": r,
-            "actor": "b",
-            "intent": parsed_b.intent if parsed_b else None,
-            "acl": asdict(parsed_b) if parsed_b else None,
-            "envelope": env_b.model_dump(),
-        })
-        if env_b.is_solved() and parsed_b and parsed_b.intent == "SOLVED":
-            solved_text["b"] = env_b.final_solution.canonical_text or ""
-        else:
-            solved_text["b"] = None
-        env_a = _apply_pseudocode(_checked(env_a_raw))
-        transcript.append({"r": r, "actor": "a", "envelope": env_a.model_dump()})
-
-        # Agent B step
-        env_b_raw, _ = agent_b.step(task, transcript)
-        env_b = _apply_pseudocode(_checked(env_b_raw))
-        transcript.append({"r": r, "actor": "b", "envelope": env_b.model_dump()})
-
-        if strategy:
-            controller_ctx["transcript"] = transcript
-            strategy.apply_controller_behaviors(controller_ctx)
-
-        # Handshake acceptance paths (either direction)
-        if last_b:
-            canon = _handshake_accept(last_b, env_a, kind)
-            if canon is not None:
-                c, h = _canon_and_hash(canon, kind)
-                final_message = None
-                if parse_a is not None:
-                    final_message = {
-                        "actor": "a",
-                        "round": r,
-                        "envelope": env_a_data,
-                        "dsl": parse_a.to_trace_entry(r, "a"),
-                    }
-                return {
-                    "status": "CONSENSUS",
-                    "rounds": r,
-                    "canonical_text": c,
-                    "sha256": h,
-                    "transcript": transcript,
-                    "dsl_trace": dsl_trace,
-                    "final_message": final_message,
-                }
-        if last_a:
-            canon = _handshake_accept(last_a, env_b, kind)
-            if canon is not None:
-                c, h = _canon_and_hash(canon, kind)
-                final_message = None
-                if parse_b is not None:
-                    final_message = {
-                        "actor": "b",
-                        "round": r,
-                        "envelope": env_b_data,
-                        "dsl": parse_b.to_trace_entry(r, "b"),
-                    }
-                return {
-                    "status": "CONSENSUS",
-                    "rounds": r,
-                    "canonical_text": c,
-                    "sha256": h,
-                    "transcript": transcript,
-                    "dsl_trace": dsl_trace,
-                    "final_message": final_message,
-                }
-
-        # Equality fallback if both produced final solutions this round
-        final_a = (
-            env_a.final_solution.canonical_text
-            if (env_a.final_solution and env_a.final_solution.canonical_text)
-            else None
-        )
-        final_b = (
-            env_b.final_solution.canonical_text
-            if (env_b.final_solution and env_b.final_solution.canonical_text)
-            else None
-        )
-        final_a = _final_return_value(env_a)
-        final_b = _final_return_value(env_b)
-        if final_a and final_b:
-            ca, ha = _canon_and_hash(final_a, kind)
-            cb, hb = _canon_and_hash(final_b, kind)
-            if ca == cb and ca != "":
-                final_message = None
-                if parse_b is not None:
-                    final_message = {
-                        "actor": "b",
-                        "round": r,
-                        "envelope": env_b_data,
-                        "dsl": parse_b.to_trace_entry(r, "b"),
-                    }
-                elif parse_a is not None:
-                    final_message = {
-                        "actor": "a",
-                        "round": r,
-                        "envelope": env_a_data,
-                        "dsl": parse_a.to_trace_entry(r, "a"),
-                    }
-                return {
-                    "status": "CONSENSUS",
-                    "rounds": r,
-                    "canonical_text": ca,
-                    "sha256": ha,
-                    "transcript": transcript,
-                    "dsl_trace": dsl_trace,
-                    "final_message": final_message,
-                }
-
-        maybe = maybe_finish(r)
-        if maybe:
-            return maybe
-
-    return {
-        "status": "NO_CONSENSUS",
-        "rounds": max_rounds,
+    result: Dict[str, Any] = {
+        "status": status,
+        "rounds": len(transcript),
         "transcript": transcript,
-        "dsl_trace": dsl_trace,
-        "final_message": None,
-        "analytics": _intent_summary(intent_counts),
+        "analytics": {actor: dict(counter) for actor, counter in analytics.items()},
+        "final_messages": {actor: final_entries.get(actor) for actor in ("a", "b")},
     }
+
+    if canonical_text:
+        result["canonical_text"] = canonical_text
+        result["sha256"] = sha256_hex(canonical_text)
+
+    return result

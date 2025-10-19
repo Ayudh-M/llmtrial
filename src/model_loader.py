@@ -1,134 +1,123 @@
 from __future__ import annotations
-from typing import List, Dict, Any, Optional
-import os, torch
-from transformers import AutoTokenizer, AutoModelForCausalLM
 
-TINY_REPO = "roneneldan/TinyStories-1M"
-TINY_TOKENIZER = "EleutherAI/gpt-neo-125M"
+"""Utilities for loading Hugging Face causal language models."""
 
-def _resolve_dtype(dtype: str | None):
-    if not dtype:
+from functools import lru_cache
+from typing import Any, Dict, List, Optional, Sequence, Tuple
+
+import torch
+from transformers import AutoModelForCausalLM, AutoTokenizer
+
+TINY_MODEL_ID = "roneneldan/TinyStories-1M"
+MISTRAL_MODEL_ID = "mistralai/Mistral-7B-Instruct-v0.2"
+
+
+def _resolve_dtype(dtype: Optional[str]):
+    if dtype is None:
         return None
-    d = dtype.lower()
-    if d in ("bfloat16","bf16"): return torch.bfloat16
-    if d in ("float16","fp16"):  return torch.float16
-    if d in ("float32","fp32"):  return torch.float32
-    return None
+    mapping = {
+        "bf16": torch.bfloat16,
+        "bfloat16": torch.bfloat16,
+        "fp16": torch.float16,
+        "float16": torch.float16,
+        "fp32": torch.float32,
+        "float32": torch.float32,
+    }
+    return mapping.get(str(dtype).lower())
 
-def load_model_and_tokenizer(repo_id: str, dtype=None, quant=None):
-    tok = AutoTokenizer.from_pretrained(repo_id)
-    kwargs = {}
-    if quant == "4bit":
-        # requires: pip install bitsandbytes accelerate
-        kwargs.update(
-            device_map="auto",
-            load_in_4bit=True,
-            bnb_4bit_quant_type="nf4",
-            bnb_4bit_use_double_quant=True,
-        )
-    elif quant == "8bit":
-        kwargs.update(device_map="auto", load_in_8bit=True)
-    else:
-        kwargs.update(device_map="auto")  # fp16/bf16 if your GPU can take it
-    model = AutoModelForCausalLM.from_pretrained(repo_id, **kwargs)
+
+@lru_cache(maxsize=4)
+def load_causal_lm(
+    model_id: str,
+    *,
+    dtype: Optional[str] = None,
+    trust_remote_code: bool = False,
+    device_map: Optional[str] = "auto",
+    low_cpu_mem_usage: bool = True,
+) -> Tuple[Any, Any]:
+    tokenizer = AutoTokenizer.from_pretrained(model_id, trust_remote_code=trust_remote_code)
+    if tokenizer.pad_token is None:
+        tokenizer.pad_token = tokenizer.eos_token
+    torch_dtype = _resolve_dtype(dtype)
+    model = AutoModelForCausalLM.from_pretrained(
+        model_id,
+        torch_dtype=torch_dtype,
+        trust_remote_code=trust_remote_code,
+        device_map=device_map,
+        low_cpu_mem_usage=low_cpu_mem_usage,
+    )
     model.eval()
-    return tok, model
+    return tokenizer, model
 
-def _has_chat_template(tokenizer) -> bool:
-    return bool(getattr(tokenizer, "chat_template", None))
 
-def build_inputs(tokenizer, messages_or_text, add_generation_prompt: bool = True):
-    if _has_chat_template(tokenizer):
-        assert isinstance(messages_or_text, list), "Chat template path requires messages list"
-        return tokenizer.apply_chat_template(messages_or_text, return_tensors="pt", add_generation_prompt=add_generation_prompt)
-    if isinstance(messages_or_text, list):
-        flat = []
-        for m in messages_or_text:
-            role = m.get("role","user")
-            content = m.get("content","")
-            flat.append(f"{role.upper()}: {content}")
-        prompt = "\n".join(flat) + "\nASSISTANT:"
-    else:
-        prompt = str(messages_or_text)
+def build_inputs(tokenizer, messages: Sequence[Dict[str, str]], *, add_generation_prompt: bool = True):
+    if hasattr(tokenizer, "apply_chat_template"):
+        return tokenizer.apply_chat_template(
+            list(messages),
+            return_tensors="pt",
+            add_generation_prompt=add_generation_prompt,
+        )
+    parts: List[str] = []
+    for message in messages:
+        parts.append(f"{message['role'].upper()}: {message['content']}")
+    prompt = "\n".join(parts)
+    if add_generation_prompt:
+        prompt += "\nASSISTANT:"
     return tokenizer(prompt, return_tensors="pt").input_ids
 
+
 @torch.inference_mode()
-def _generate(
+def generate_chat_completion(
     tokenizer,
     model,
-    messages,
-    max_new_tokens: int = 256,
-    temperature: float = 0.0,
-    do_sample: Optional[bool] = None,
-    top_p: Optional[float] = None,
-    top_k: Optional[int] = None,
-):
-def _generate(tokenizer, model, messages, max_new_tokens=256, temperature=0.0, do_sample: Optional[bool]=None, **gen_kwargs):
-    if do_sample is None:
-        do_sample = bool(temperature and float(temperature) > 0.0)
-    input_ids = build_inputs(tokenizer, messages, add_generation_prompt=True)
-    input_ids = input_ids.to(model.device)
-    gen_kwargs: Dict[str, Any] = {
-        "do_sample": do_sample,
-        "temperature": float(temperature or 0.0),
-        "max_new_tokens": int(max_new_tokens or 256),
-    }
-    if top_p is not None:
-        gen_kwargs["top_p"] = float(top_p)
-    if top_k is not None:
-        gen_kwargs["top_k"] = int(top_k)
-    out = model.generate(
-        input_ids=input_ids,
-        **gen_kwargs,
-    )
-    return tokenizer.decode(out[0], skip_special_tokens=True)
-
-def generate_json_only(
-    tokenizer,
-    model,
-    messages: List[Dict[str, str]],
-    max_new_tokens: int = 256,
-    temperature: float = 0.0,
-    do_sample: Optional[bool] = None,
-    top_p: Optional[float] = None,
-    top_k: Optional[int] = None,
+    messages: Sequence[Dict[str, str]],
+    *,
+    decoding: Optional[Dict[str, Any]] = None,
 ) -> str:
-    gen_kwargs.setdefault("max_new_tokens", int(max_new_tokens or 256))
-    gen_kwargs.setdefault("temperature", float(temperature or 0.0))
-    gen_kwargs.setdefault("do_sample", do_sample)
-    out = model.generate(input_ids=input_ids, **gen_kwargs)
-    return tokenizer.decode(out[0], skip_special_tokens=True)
+    decode_cfg = dict(decoding or {})
+    max_new_tokens = int(decode_cfg.pop("max_new_tokens", 256))
+    temperature = float(decode_cfg.pop("temperature", 0.0))
+    do_sample = decode_cfg.pop("do_sample", None)
+    if do_sample is None:
+        do_sample = temperature > 0
+
+    input_ids = build_inputs(tokenizer, messages)
+    input_ids = input_ids.to(model.device)
+
+    generation_kwargs = {
+        "max_new_tokens": max_new_tokens,
+        "temperature": temperature,
+        "do_sample": do_sample,
+    }
+    generation_kwargs.update(decode_cfg)
+
+    output = model.generate(input_ids=input_ids, **generation_kwargs)
+    return tokenizer.decode(output[0], skip_special_tokens=True)
 
 
 def generate_json_only(
     tokenizer,
     model,
-    messages_or_system,
+    system_prompt: str | Sequence[Dict[str, str]],
     user_prompt: Optional[str] = None,
     *,
     decoding: Optional[Dict[str, Any]] = None,
-    **legacy_kwargs,
 ) -> str:
-    if isinstance(messages_or_system, list):
-        messages = messages_or_system
+    if isinstance(system_prompt, Sequence) and not isinstance(system_prompt, str):
+        messages = list(system_prompt)
     else:
         messages = [
-            {"role": "system", "content": str(messages_or_system)},
+            {"role": "system", "content": str(system_prompt)},
             {"role": "user", "content": str(user_prompt or "")},
         ]
-    decode_cfg: Dict[str, Any] = dict(decoding or {})
-    decode_cfg.update(legacy_kwargs)
-    max_new_tokens = decode_cfg.pop("max_new_tokens", 256)
-    temperature = decode_cfg.pop("temperature", 0.0)
-    do_sample = decode_cfg.pop("do_sample", None)
-    return _generate(
-        tokenizer,
-        model,
-        messages,
-        max_new_tokens=max_new_tokens,
-        temperature=temperature,
-        do_sample=do_sample,
-        top_p=top_p,
-        top_k=top_k,
-        **decode_cfg,
-    )
+    return generate_chat_completion(tokenizer, model, messages, decoding=decoding)
+
+
+__all__ = [
+    "TINY_MODEL_ID",
+    "MISTRAL_MODEL_ID",
+    "load_causal_lm",
+    "generate_chat_completion",
+    "generate_json_only",
+    "build_inputs",
+]
