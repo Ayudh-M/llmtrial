@@ -1,0 +1,16 @@
+id: S_concise
+name: concise_text
+json_only: false
+allow_cot: false
+decoding:
+  do_sample: false
+  temperature: 0.3
+  max_new_tokens: 64
+prompt_snippet: "Keep every reply to one or two short sentences; be direct."
+validator: concise_text
+validator_params:
+  max_sentences: 2
+  max_tokens: 24
+envelope_required: false
+max_rounds: 3
+consensus_mode: review_handshake

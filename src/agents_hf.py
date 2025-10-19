@@ -41,7 +41,11 @@ class HFChatAgent:
         self.strategy = strategy
 
     def _messages(self, task: str, transcript: List[Dict[str, Any]]):
-        sys = self.system_prompt + "\n\n" + JSON_GUIDE if self.strategy.json_only else self.system_prompt
+        sys = self.system_prompt
+        if self.strategy.prompt_snippet:
+            sys = sys + "\n\n" + self.strategy.prompt_snippet
+        if self.strategy.json_only:
+            sys = sys + "\n\n" + JSON_GUIDE
         peer_context = "{}"
         if transcript:
             last = transcript[-1]
