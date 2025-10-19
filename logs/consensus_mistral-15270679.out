@@ -1,0 +1,22 @@
+cuDNN present
+[error] Failed to load models/tokenizers: mistralai/Mistral-7B-Instruct is not a local folder and is not a valid model identifier listed on 'https://huggingface.co/models'
+If this is a private repository, make sure to pass a token having permission to this repo either by logging in with `hf auth login` or by passing `token=<your_token>`
+[error] Failed to load models/tokenizers: mistralai/Mistral-7B-Instruct is not a local folder and is not a valid model identifier listed on 'https://huggingface.co/models'
+If this is a private repository, make sure to pass a token having permission to this repo either by logging in with `hf auth login` or by passing `token=<your_token>`
+srun: error: gcn19: tasks 0-1: Exited with exit code 3
+srun: Terminating StepId=15270679.0
+
+JOB STATISTICS
+==============
+Job ID: 15270679
+Cluster: snellius
+User/Group: ahaldar/ahaldar
+State: RUNNING
+Nodes: 1
+Cores per node: 18
+CPU Utilized: 00:00:00
+CPU Efficiency: 0.00% of 00:03:36 core-walltime
+Job Wall-clock time: 00:00:12
+Memory Utilized: 0.00 MB
+Memory Efficiency: 0.00% of 40.00 GB (40.00 GB/node)
+WARNING: Efficiency statistics can only be obtained after the job has ended as seff tool is based on the accounting database data.

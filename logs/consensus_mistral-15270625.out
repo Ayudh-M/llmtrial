@@ -1,0 +1,21 @@
+[error] Failed to load models/tokenizers: mistralai/Mistral-7B-Instruct is not a local folder and is not a valid model identifier listed on 'https://huggingface.co/models'
+If this is a private repository, make sure to pass a token having permission to this repo either by logging in with `hf auth login` or by passing `token=<your_token>`
+[error] Failed to load models/tokenizers: mistralai/Mistral-7B-Instruct is not a local folder and is not a valid model identifier listed on 'https://huggingface.co/models'
+If this is a private repository, make sure to pass a token having permission to this repo either by logging in with `hf auth login` or by passing `token=<your_token>`
+srun: error: gcn19: tasks 0-1: Exited with exit code 3
+srun: Terminating StepId=15270625.0
+
+JOB STATISTICS
+==============
+Job ID: 15270625
+Cluster: snellius
+User/Group: ahaldar/ahaldar
+State: FAILED (exit code 3)
+Nodes: 1
+Cores per node: 18
+CPU Utilized: 00:00:01
+CPU Efficiency: 0.33% of 00:05:06 core-walltime
+Job Wall-clock time: 00:00:17
+Memory Utilized: 9.55 MB
+Memory Efficiency: 0.02% of 40.00 GB (40.00 GB/node)
+The task which had the largest memory consumption differs by 100.02% from the average task max memory consumption

@@ -1,0 +1,28 @@
+#!/bin/bash
+#SBATCH --job-name=consensus-mock
+#SBATCH --partition=gpu_h100          # or gpu_a100; CPU-only: rome/genoa and remove --gpus
+#SBATCH --nodes=1
+#SBATCH --gpus=1
+#SBATCH --cpus-per-task=8
+#SBATCH --time=00:10:00
+#SBATCH --mem=24G
+#SBATCH --output=logs/%x-%j.out
+
+set -euo pipefail
+
+# Positional args: $1 TASK, $2 STRATEGY, $3 AGENT_A, $4 AGENT_B, $5 ROLESET, $6 ANSWER
+TASK="${1:-2+2}"
+STRATEGY="${2:-S1}"
+AGENTA="${3:-mock_rule}"
+AGENTB="${4:-mock_echo}"
+ROLESET="${5:-rolesets/sql_author_auditor.json}"
+ANSWER="${6:-4}"
+
+module purge
+module load 2024
+module load Python/3.12.3-GCCcore-13.3.0
+source ~/.venvs/consensus312/bin/activate
+mkdir -p runs logs
+
+# MOCK run (writes per-run JSON + appends to runs/diagnostics.csv)
+srun python -m src.main --mock   --task "$TASK"   --answer "$ANSWER"   --strategy "$STRATEGY"   --roleset "$ROLESET"   --agent-a "$AGENTA"   --agent-b "$AGENTB"   --max-rounds 12

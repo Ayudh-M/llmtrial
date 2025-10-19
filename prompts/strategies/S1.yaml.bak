@@ -1,0 +1,11 @@
+id: S1
+name: strict_json
+json_only: true
+json_envelope_schema: schemas/envelope.schema.json
+allow_cot: false
+decoding:
+  do_sample: false
+  temperature: 0.0
+  top_p: 1.0
+max_rounds: 8
+consensus_mode: review_handshake

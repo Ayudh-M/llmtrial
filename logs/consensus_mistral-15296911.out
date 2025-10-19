@@ -1,0 +1,12 @@
+Traceback (most recent call last):
+  File "/usr/lib64/python3.9/runpy.py", line 197, in _run_module_as_main
+    return _run_code(code, main_globals, None,
+  File "/usr/lib64/python3.9/runpy.py", line 87, in _run_code
+    exec(code, run_globals)
+  File "/gpfs/home5/ahaldar/projects/llm-orchestrator/src/main.py", line 3, in <module>
+    from src.controller import run_controller
+  File "/gpfs/home5/ahaldar/projects/llm-orchestrator/src/controller.py", line 3, in <module>
+    from pydantic import ValidationError
+ModuleNotFoundError: No module named 'pydantic'
+srun: error: gcn113: task 0: Exited with exit code 1
+srun: Terminating StepId=15296911.0

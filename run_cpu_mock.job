@@ -1,0 +1,20 @@
+#!/bin/bash
+#SBATCH --job-name=consensus-mock
+#SBATCH --partition=rome
+#SBATCH --cpus-per-task=4
+#SBATCH --time=00:05:00
+#SBATCH --mem=8G
+#SBATCH --output=logs/%x-%j.out
+set -euo pipefail
+cd "$SLURM_SUBMIT_DIR"; mkdir -p logs runs
+module purge; module load 2024; module load Python/3.12.3-GCCcore-13.3.0
+if [ -f "$HOME/.venvs/consensus312/bin/activate" ]; then
+  source "$HOME/.venvs/consensus312/bin/activate"
+else
+  python3 -m venv "$HOME/.venvs/consensus312"
+  source "$HOME/.venvs/consensus312/bin/activate"
+  python -m pip install -U pip
+  pip install -r requirements.txt
+fi
+export PYTHONPATH="$PWD:$PWD/src:${PYTHONPATH:-}"
+srun python -m src.main --mock --scenario tiny_truth

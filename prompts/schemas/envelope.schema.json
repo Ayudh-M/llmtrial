@@ -1,0 +1,41 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "Agent Envelope (generic)",
+  "type": "object",
+  "required": [
+    "status",
+    "tag",
+    "content"
+  ],
+  "properties": {
+    "status": {
+      "type": "string"
+    },
+    "tag": {
+      "type": "string"
+    },
+    "content": {
+      "type": "object",
+      "additionalProperties": true
+    },
+    "final_solution": {
+      "type": [
+        "object",
+        "null"
+      ],
+      "properties": {
+        "canonical_text": {
+          "type": "string"
+        },
+        "sha256": {
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      },
+      "additionalProperties": true
+    }
+  },
+  "additionalProperties": true
+}

@@ -1,0 +1,12 @@
+id: S1_quick
+name: strict_json_quick
+json_only: true
+json_envelope_schema: prompts/schemas/envelope.number.schema.json
+allow_cot: false
+decoding:
+  do_sample: false
+  temperature: 0.0
+  top_p: 1.0
+  max_new_tokens: 32
+max_rounds: 1
+consensus_mode: review_handshake

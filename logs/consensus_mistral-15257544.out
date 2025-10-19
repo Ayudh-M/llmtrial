@@ -1,0 +1,55 @@
+Traceback (most recent call last):
+  File "/gpfs/home5/ahaldar/projects/llm-orchestrator/src/main.py", line 14, in <module>
+Traceback (most recent call last):
+  File "/gpfs/home5/ahaldar/projects/llm-orchestrator/src/main.py", line 14, in <module>
+    from .model_loader import load_model_and_tokenizer
+  File "/gpfs/home5/ahaldar/projects/llm-orchestrator/src/model_loader.py", line 3, in <module>
+    from .model_loader import load_model_and_tokenizer
+  File "/gpfs/home5/ahaldar/projects/llm-orchestrator/src/model_loader.py", line 3, in <module>
+    import os, torch
+  File "/home/ahaldar/.venvs/consensus/lib64/python3.9/site-packages/torch/__init__.py", line 416, in <module>
+    import os, torch
+  File "/home/ahaldar/.venvs/consensus/lib64/python3.9/site-packages/torch/__init__.py", line 416, in <module>
+    from torch._C import *  # noqa: F403
+ImportError: libcudnn.so.9: cannot open shared object file: No such file or directory
+
+During handling of the above exception, another exception occurred:
+
+    from torch._C import *  # noqa: F403
+ImportError: libcudnn.so.9: cannot open shared object file: No such file or directory
+
+During handling of the above exception, another exception occurred:
+
+Traceback (most recent call last):
+  File "/usr/lib64/python3.9/runpy.py", line 197, in _run_module_as_main
+Traceback (most recent call last):
+  File "/usr/lib64/python3.9/runpy.py", line 197, in _run_module_as_main
+    return _run_code(code, main_globals, None,
+  File "/usr/lib64/python3.9/runpy.py", line 87, in _run_code
+    return _run_code(code, main_globals, None,
+  File "/usr/lib64/python3.9/runpy.py", line 87, in _run_code
+    exec(code, run_globals)
+  File "/gpfs/home5/ahaldar/projects/llm-orchestrator/src/main.py", line 20, in <module>
+    exec(code, run_globals)
+  File "/gpfs/home5/ahaldar/projects/llm-orchestrator/src/main.py", line 20, in <module>
+    from template_loader import get_scenario, load_roleset, load_strategy  # type: ignore
+ModuleNotFoundError: No module named 'template_loader'
+    from template_loader import get_scenario, load_roleset, load_strategy  # type: ignore
+ModuleNotFoundError: No module named 'template_loader'
+srun: error: gcn46: tasks 0-1: Exited with exit code 1
+srun: Terminating StepId=15257544.0
+
+JOB STATISTICS
+==============
+Job ID: 15257544
+Cluster: snellius
+User/Group: ahaldar/ahaldar
+State: FAILED (exit code 1)
+Nodes: 1
+Cores per node: 18
+CPU Utilized: 00:00:00
+CPU Efficiency: 0.00% of 00:03:00 core-walltime
+Job Wall-clock time: 00:00:10
+Memory Utilized: 6.81 MB
+Memory Efficiency: 0.02% of 40.00 GB (40.00 GB/node)
+The task which had the largest memory consumption differs by 100.03% from the average task max memory consumption

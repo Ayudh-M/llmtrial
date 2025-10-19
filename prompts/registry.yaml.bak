@@ -1,0 +1,10 @@
+scenarios:
+  mistral_math_smoke:
+    task: "Compute 3+1 and return only the number."
+    roleset: rolesets/math_solver_checker.json
+    strategy: S1
+    model_a: mistralai/Mistral-7B-Instruct
+    model_b: mistralai/Mistral-7B-Instruct
+    dtype: bf16
+    max_rounds: 4
+    canon_kind: number

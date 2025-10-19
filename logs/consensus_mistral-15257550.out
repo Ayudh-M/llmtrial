@@ -1,0 +1,24 @@
+cuDNN already present
+/home/ahaldar/.venvs/consensus/lib64/python3.9/site-packages/transformers/utils/hub.py:110: FutureWarning: Using `TRANSFORMERS_CACHE` is deprecated and will be removed in v5 of Transformers. Use `HF_HOME` instead.
+  warnings.warn(
+/home/ahaldar/.venvs/consensus/lib64/python3.9/site-packages/transformers/utils/hub.py:110: FutureWarning: Using `TRANSFORMERS_CACHE` is deprecated and will be removed in v5 of Transformers. Use `HF_HOME` instead.
+  warnings.warn(
+[error] Could not load scenario 'mistral_math_smoke': Registry must contain a 'scenarios' mapping.
+[error] Could not load scenario 'mistral_math_smoke': Registry must contain a 'scenarios' mapping.
+srun: error: gcn19: tasks 0-1: Exited with exit code 2
+srun: Terminating StepId=15257550.0
+
+JOB STATISTICS
+==============
+Job ID: 15257550
+Cluster: snellius
+User/Group: ahaldar/ahaldar
+State: RUNNING
+Nodes: 1
+Cores per node: 18
+CPU Utilized: 00:00:00
+CPU Efficiency: 0.00% of 00:03:54 core-walltime
+Job Wall-clock time: 00:00:13
+Memory Utilized: 0.00 MB
+Memory Efficiency: 0.00% of 40.00 GB (40.00 GB/node)
+WARNING: Efficiency statistics can only be obtained after the job has ended as seff tool is based on the accounting database data.

@@ -1,0 +1,19 @@
+#!/bin/bash
+#SBATCH -J dl_mistral_v03
+#SBATCH -A tesr108469
+#SBATCH -p gpu_a100
+#SBATCH --gpus=1
+#SBATCH --time=00:05:00
+#SBATCH -o logs/%x-%j.out
+set -euo pipefail
+source ~/.venvs/consensus/bin/activate
+python - <<'PY'
+import os
+from huggingface_hub import snapshot_download
+from pathlib import Path
+dest = Path("/scratch-shared")/os.environ["USER"]/ "hf_models"/"mistral-7b-instruct-v0.3"
+dest.mkdir(parents=True, exist_ok=True)
+snapshot_download(repo_id="mistralai/Mistral-7B-Instruct-v0.3",
+                  local_dir=dest, local_dir_use_symlinks=False)
+print("Downloaded to:", dest)
+PY

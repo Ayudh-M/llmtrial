@@ -1,0 +1,30 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "Agent Envelope (number tasks)",
+  "type": "object",
+  "required": ["status", "tag", "content", "final_solution"],
+  "properties": {
+    "status": {
+      "type": "string",
+      "enum": ["WORKING", "NEED_PEER", "PROPOSED", "READY_TO_SOLVE", "REVISED", "SOLVED"]
+    },
+    "tag": { "type": "string" },
+    "content": { "type": "object", "additionalProperties": true },
+    "final_solution": {
+      "type": "object",
+      "required": ["canonical_text"],
+      "properties": {
+        "canonical_text": {
+          "type": "string",
+          "pattern": "^-?\\d+(?:\\.\\d+)?$"
+        },
+        "sha256": { "type": ["string", "null"] }
+      },
+      "additionalProperties": true
+    },
+    "artifact": { "type": ["object", "null"] },
+    "role": { "type": ["string", "null"] },
+    "domain": { "type": ["string", "null"] }
+  },
+  "additionalProperties": true
+}

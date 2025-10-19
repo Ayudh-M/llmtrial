@@ -1,0 +1,30 @@
+scenarios:
+  mistral_math_smoke:
+    task: Compute 3+1 and return only the number.
+    roleset: rolesets/math_solver_checker.json
+    strategy: S1
+    model_a: mistralai/Mistral-7B-Instruct-v0.3
+    model_b: mistralai/Mistral-7B-Instruct-v0.3
+    dtype: bf16
+    max_rounds: 4
+    canon_kind: number
+    kind: number
+
+
+  regex_email_basic:
+    task: "Write a regex that matches valid example.com emails and rejects others."
+    roleset: rolesets/regex_author_tester.json
+    strategy: S1
+    model_a: mistralai/Mistral-7B-Instruct-v0.3
+    model_b: mistralai/Mistral-7B-Instruct-v0.3
+    kind: regex
+    canon_kind: regex
+
+  sql_sales_sum:
+    task: "Given table orders(id, customer_id, amount, created_at), return total amount per customer for 2024."
+    roleset: rolesets/sql_author_auditor.json
+    strategy: S1
+    model_a: mistralai/Mistral-7B-Instruct-v0.3
+    model_b: mistralai/Mistral-7B-Instruct-v0.3
+    kind: sql
+    canon_kind: sql

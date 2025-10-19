@@ -1,0 +1,24 @@
+cuDNN present
+Fetching 3 files:   0%|          | 0/3 [00:00<?, ?it/s]Fetching 3 files:  33%|███▎      | 1/3 [00:19<00:39, 19.88s/it]Fetching 3 files: 100%|██████████| 3/3 [00:19<00:00,  6.63s/it]
+Fetching 3 files:   0%|          | 0/3 [00:00<?, ?it/s]Fetching 3 files:  33%|███▎      | 1/3 [00:19<00:39, 19.84s/it]Fetching 3 files: 100%|██████████| 3/3 [00:19<00:00,  6.61s/it]
+[error] Failed to load models/tokenizers: CUDA out of memory. Tried to allocate 26.50 GiB. GPU 0 has a total capacity of 39.49 GiB of which 12.16 GiB is free. Including non-PyTorch memory, this process has 416.00 MiB memory in use. Process 599877 has 26.91 GiB memory in use. Of the allocated memory 0 bytes is allocated by PyTorch, and 0 bytes is reserved by PyTorch but unallocated. If reserved but unallocated memory is large try setting PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True to avoid fragmentation.  See documentation for Memory Management  (https://pytorch.org/docs/stable/notes/cuda.html#environment-variables)
+srun: error: gcn53: task 1: Exited with exit code 3
+srun: Terminating StepId=15271998.0
+Loading checkpoint shards:   0%|          | 0/3 [00:00<?, ?it/s][2025-10-13T12:01:22.805] error: *** STEP 15271998.0 ON gcn53 CANCELLED AT 2025-10-13T12:01:22 DUE TO TASK FAILURE ***
+srun: error: gcn53: task 0: Terminated
+srun: Force Terminated StepId=15271998.0
+
+JOB STATISTICS
+==============
+Job ID: 15271998
+Cluster: snellius
+User/Group: ahaldar/ahaldar
+State: RUNNING
+Nodes: 1
+Cores per node: 18
+CPU Utilized: 00:00:00
+CPU Efficiency: 0.00% of 00:13:12 core-walltime
+Job Wall-clock time: 00:00:44
+Memory Utilized: 0.00 MB
+Memory Efficiency: 0.00% of 40.00 GB (40.00 GB/node)
+WARNING: Efficiency statistics can only be obtained after the job has ended as seff tool is based on the accounting database data.

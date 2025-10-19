@@ -1,0 +1,28 @@
+cuDNN present
+[error] Failed to load models/tokenizers: 
+ requires the protobuf library but it was not found in your environment. Check out the instructions on the
+installation page of its repo: https://github.com/protocolbuffers/protobuf/tree/master/python#installation and follow the ones
+that match your environment. Please note that you may need to restart your runtime after installation.
+
+[error] Failed to load models/tokenizers: 
+ requires the protobuf library but it was not found in your environment. Check out the instructions on the
+installation page of its repo: https://github.com/protocolbuffers/protobuf/tree/master/python#installation and follow the ones
+that match your environment. Please note that you may need to restart your runtime after installation.
+
+srun: error: gcn7: tasks 0-1: Exited with exit code 3
+srun: Terminating StepId=15271339.0
+
+JOB STATISTICS
+==============
+Job ID: 15271339
+Cluster: snellius
+User/Group: ahaldar/ahaldar
+State: FAILED (exit code 3)
+Nodes: 1
+Cores per node: 18
+CPU Utilized: 00:00:00
+CPU Efficiency: 0.00% of 00:04:48 core-walltime
+Job Wall-clock time: 00:00:16
+Memory Utilized: 5.08 MB
+Memory Efficiency: 0.01% of 40.00 GB (40.00 GB/node)
+The task which had the largest memory consumption differs by 100.08% from the average task max memory consumption
