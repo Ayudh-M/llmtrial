@@ -10,7 +10,21 @@ class MockAgent:
     def step(self, task: str, transcript: List[Dict[str, Any]]) -> Tuple[Dict[str, Any], str]:
         if not self._has_proposed:
             self._has_proposed = True
-            env = {"tag":"[CONTACT]", "status":"PROPOSED", "content":{"proposal": self.solution_text}}
+            env = {
+                "tag": "[CONTACT]",
+                "status": "PROPOSED",
+                "content": {
+                    "acl": f"PROPOSE: sharing candidate '{self.solution_text}' => WAIT_FOR_PEER",
+                    "proposal": self.solution_text,
+                },
+            }
             return env, str(env)
-        env = {"tag":"[SOLVED]", "status":"SOLVED", "final_solution":{"canonical_text": self.solution_text}}
+        env = {
+            "tag": "[SOLVED]",
+            "status": "SOLVED",
+            "content": {
+                "acl": "SOLVED: submitting final answer => END_DIALOGUE",
+            },
+            "final_solution": {"canonical_text": self.solution_text},
+        }
         return env, str(env)
