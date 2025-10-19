@@ -94,6 +94,11 @@ def sha256_hex(s: str) -> str:
     return hashlib.sha256(s.encode("utf-8")).hexdigest()
 
 
+def normalize_text(text: str) -> str:
+    if not isinstance(text, str):
+        text = str(text)
+    normalized = unicodedata.normalize("NFKC", text)
+    return "".join(ch for ch in normalized if unicodedata.category(ch) != "Cf")
 def normalize_text(text: str | None) -> str:
     if text is None:
         return ""

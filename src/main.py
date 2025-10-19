@@ -16,11 +16,13 @@ try:
     from .agents_hf import HFChatAgent
     from .agents_mock import MockAgent
     from .controller import run_controller
+    from .dsl import extension_from_config
 except ImportError:
     # Fallback if someone runs `python src/main.py` by mistake
     from template_loader import get_scenario, load_roleset, load_strategy  # type: ignore
     from strategies import build_strategy  # type: ignore
     from model_loader import load_model_and_tokenizer
+    from dsl import extension_from_config  # type: ignore
 
 def _maybe_shared_loader(model_id_a, model_id_b, dtype):
     """If A and B model IDs match, load once and share; else load separately."""
@@ -197,6 +199,9 @@ def main() -> None:
             strat_overrides[key] = scenario[key]
     strategy = build_strategy(strat_cfg, overrides=strat_overrides)
 
+    extension = extension_from_config(scenario.get("dsl_extensions"))
+    dsl_validator = strategy.dsl_spec.create_validator(extension)
+
     task_text: str = scenario.get("task", "")
     if not isinstance(task_text, str) or not task_text.strip():
         print("[error] Scenario 'task' is empty.", file=sys.stderr)
@@ -210,6 +215,7 @@ def main() -> None:
         mock_solution = scenario.get("mock_solution", "TRUE")
         agent_a = MockAgent("A", solution_text=mock_solution)
         agent_b = MockAgent("B", solution_text=mock_solution)
+        result = run_controller(task_text, agent_a, agent_b, max_rounds=strategy.max_rounds, kind=kind, dsl_validator=dsl_validator)
         result = run_controller(
             task_text,
             agent_a,
@@ -264,6 +270,7 @@ def main() -> None:
         agent_b = HFChatAgent(name_b, sys_b, tok_b, mdl_b, strategy)
 
         # Controller
+        result = run_controller(task_text, agent_a, agent_b, max_rounds=strategy.max_rounds, kind=kind, dsl_validator=dsl_validator)
         result = run_controller(
             task_text,
             agent_a,
