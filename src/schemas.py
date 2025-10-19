@@ -8,10 +8,13 @@ from jsonschema import Draft7Validator
 from pydantic import BaseModel, Field
 
 ROOT = Path(__file__).resolve().parents[1]
+from pydantic import BaseModel, Field, ConfigDict
+from typing import Optional, Dict, Any
 
 class FinalSolution(BaseModel):
     canonical_text: str
     sha256: Optional[str] = None
+    model_config = ConfigDict(extra="allow")
 
 class Envelope(BaseModel):
     tag: str = Field(pattern=r"^\[(CONTACT|SOLVED)\]$")

@@ -217,6 +217,7 @@ def main() -> None:
             max_rounds=strategy.max_rounds,
             kind=kind,
             schema_validator=strategy.envelope_validator,
+            strategy=strategy,
         )
     else:
         # Real models path: load roleset + models
@@ -270,6 +271,7 @@ def main() -> None:
             max_rounds=strategy.max_rounds,
             kind=kind,
             schema_validator=strategy.envelope_validator,
+            strategy=strategy,
         )
 
     # 3) Persist artifact

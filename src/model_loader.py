@@ -1,5 +1,5 @@
 from __future__ import annotations
-from typing import List, Dict, Any, Optional, Tuple
+from typing import List, Dict, Any, Optional
 import os, torch
 from transformers import AutoTokenizer, AutoModelForCausalLM
 
@@ -63,6 +63,7 @@ def _generate(
     top_p: Optional[float] = None,
     top_k: Optional[int] = None,
 ):
+def _generate(tokenizer, model, messages, max_new_tokens=256, temperature=0.0, do_sample: Optional[bool]=None, **gen_kwargs):
     if do_sample is None:
         do_sample = bool(temperature and float(temperature) > 0.0)
     input_ids = build_inputs(tokenizer, messages, add_generation_prompt=True)
@@ -92,6 +93,34 @@ def generate_json_only(
     top_p: Optional[float] = None,
     top_k: Optional[int] = None,
 ) -> str:
+    gen_kwargs.setdefault("max_new_tokens", int(max_new_tokens or 256))
+    gen_kwargs.setdefault("temperature", float(temperature or 0.0))
+    gen_kwargs.setdefault("do_sample", do_sample)
+    out = model.generate(input_ids=input_ids, **gen_kwargs)
+    return tokenizer.decode(out[0], skip_special_tokens=True)
+
+
+def generate_json_only(
+    tokenizer,
+    model,
+    messages_or_system,
+    user_prompt: Optional[str] = None,
+    *,
+    decoding: Optional[Dict[str, Any]] = None,
+    **legacy_kwargs,
+) -> str:
+    if isinstance(messages_or_system, list):
+        messages = messages_or_system
+    else:
+        messages = [
+            {"role": "system", "content": str(messages_or_system)},
+            {"role": "user", "content": str(user_prompt or "")},
+        ]
+    decode_cfg: Dict[str, Any] = dict(decoding or {})
+    decode_cfg.update(legacy_kwargs)
+    max_new_tokens = decode_cfg.pop("max_new_tokens", 256)
+    temperature = decode_cfg.pop("temperature", 0.0)
+    do_sample = decode_cfg.pop("do_sample", None)
     return _generate(
         tokenizer,
         model,
@@ -101,4 +130,5 @@ def generate_json_only(
         do_sample=do_sample,
         top_p=top_p,
         top_k=top_k,
+        **decode_cfg,
     )
