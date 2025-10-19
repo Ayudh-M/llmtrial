@@ -51,10 +51,16 @@ class HFChatAgent:
 
     def step(self, task: str, transcript: List[Dict[str, Any]]):
         msgs = self._messages(task, transcript)
+        decoding = self.strategy.decoding or {}
         raw = generate_json_only(
-            self.tokenizer, self.model, msgs,
-            max_new_tokens=(self.strategy.decoding or {}).get("max_new_tokens", 256),
-            temperature=(self.strategy.decoding or {}).get("temperature", 0.0)
+            self.tokenizer,
+            self.model,
+            msgs,
+            max_new_tokens=decoding.get("max_new_tokens", 256),
+            temperature=decoding.get("temperature", 0.0),
+            do_sample=decoding.get("do_sample"),
+            top_p=decoding.get("top_p"),
+            top_k=decoding.get("top_k"),
         )
         env = _extract_json(raw) or {"status": "WORKING", "tag": "[CONTACT]", "content": {"note": "fallback"}}
         env = repair_envelope(env)

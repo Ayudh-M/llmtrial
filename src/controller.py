@@ -1,10 +1,13 @@
 from __future__ import annotations
 from typing import Dict, Any, Tuple, Optional, List
+
+from jsonschema import Draft7Validator
 from pydantic import ValidationError
 from .schemas import Envelope
 from .canonicalize import canonicalize_for_hash
 from .utils import to_json, sha256_hex
 from .sanitize import repair_envelope
+from .json_enforcer import validate_envelope
 
 def _checked(env_dict: Dict[str, Any]) -> Envelope:
     try:
@@ -29,7 +32,24 @@ def _handshake_accept(prev_env: Envelope, curr_env: Envelope, kind: Optional[str
         pass
     return None
 
-def run_controller(task: str, agent_a, agent_b, max_rounds: int = 8, kind: Optional[str] = None) -> Dict[str, Any]:
+def _enforce_schema(env: Envelope, validator: Optional[Draft7Validator], actor: str, round_no: int) -> None:
+    if not validator:
+        return
+    ok, errors = validate_envelope(env.model_dump(exclude_none=True), validator)
+    if ok:
+        return
+    details = "; ".join(errors) if errors else "unknown validation error"
+    raise ValueError(f"Schema validation failed for {actor} on round {round_no}: {details}")
+
+
+def run_controller(
+    task: str,
+    agent_a,
+    agent_b,
+    max_rounds: int = 8,
+    kind: Optional[str] = None,
+    schema_validator: Optional[Draft7Validator] = None,
+) -> Dict[str, Any]:
     transcript: List[Dict[str, Any]] = []
     last_a: Optional[Envelope] = None
     last_b: Optional[Envelope] = None
@@ -38,11 +58,13 @@ def run_controller(task: str, agent_a, agent_b, max_rounds: int = 8, kind: Optio
         # Agent A step
         env_a_raw, _ = agent_a.step(task, transcript)
         env_a = _checked(env_a_raw)
+        _enforce_schema(env_a, schema_validator, getattr(agent_a, "name", "agent_a"), r)
         transcript.append({"r": r, "actor": "a", "envelope": env_a.model_dump()})
 
         # Agent B step
         env_b_raw, _ = agent_b.step(task, transcript)
         env_b = _checked(env_b_raw)
+        _enforce_schema(env_b, schema_validator, getattr(agent_b, "name", "agent_b"), r)
         transcript.append({"r": r, "actor": "b", "envelope": env_b.model_dump()})
 
         # Handshake acceptance paths (either direction)

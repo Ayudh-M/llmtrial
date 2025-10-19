@@ -2,29 +2,100 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "title": "Agent Envelope",
   "type": "object",
-  "required": ["status", "tag", "content", "final_solution"],
+  "required": [
+    "status",
+    "tag"
+  ],
   "properties": {
     "status": {
       "type": "string",
-      "enum": ["WORKING", "NEED_PEER", "PROPOSED", "READY_TO_SOLVE", "REVISED", "SOLVED"]
+      "enum": [
+        "WORKING",
+        "NEED_PEER",
+        "PROPOSED",
+        "READY_TO_SOLVE",
+        "REVISED",
+        "SOLVED"
+      ]
     },
-    "tag": { "type": "string" },
+    "tag": {
+      "type": "string",
+      "pattern": "^\\[(CONTACT|SOLVED)\\]$"
+    },
     "content": {
-      "type": "object",
+      "type": [
+        "object",
+        "null"
+      ],
       "additionalProperties": true
     },
     "final_solution": {
       "type": "object",
-      "required": ["canonical_text"],
+      "required": [
+        "canonical_text"
+      ],
       "properties": {
-        "canonical_text": { "type": "string" },
-        "sha256": { "type": ["string", "null"] }
+        "canonical_text": {
+          "type": "string",
+          "minLength": 1
+        },
+        "sha256": {
+          "type": [
+            "string",
+            "null"
+          ]
+        }
       },
       "additionalProperties": true
     },
-    "artifact": { "type": ["object", "null"] },
-    "role": { "type": ["string", "null"] },
-    "domain": { "type": ["string", "null"] }
+    "artifact": {
+      "type": [
+        "object",
+        "null"
+      ]
+    },
+    "role": {
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "domain": {
+      "type": [
+        "string",
+        "null"
+      ]
+    }
   },
-  "additionalProperties": true
+  "additionalProperties": true,
+  "allOf": [
+    {
+      "if": {
+        "properties": {
+          "status": {
+            "const": "SOLVED"
+          }
+        }
+      },
+      "then": {
+        "required": [
+          "final_solution"
+        ]
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "tag": {
+            "const": "[SOLVED]"
+          }
+        }
+      },
+      "then": {
+        "required": [
+          "final_solution"
+        ]
+      }
+    }
+  ]
 }

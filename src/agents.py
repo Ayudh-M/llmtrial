@@ -43,11 +43,19 @@ class Agent:
         return task
 
     def _gen_once(self, user_prompt: str, max_new_tokens: int) -> Tuple[Dict[str,Any] | None, str]:
-        raw = generate_json_only(self.tok, self.model, self.system_prompt, user_prompt,
-                                 max_new_tokens=max_new_tokens,
-                                 do_sample=not self.cfg.greedy,
-                                 temperature=0.7 if not self.cfg.greedy else 0.0,
-                                 top_p=0.95 if not self.cfg.greedy else 1.0)
+        messages = [
+            {"role": "system", "content": self.system_prompt},
+            {"role": "user", "content": user_prompt},
+        ]
+        raw = generate_json_only(
+            self.tok,
+            self.model,
+            messages,
+            max_new_tokens=max_new_tokens,
+            do_sample=not self.cfg.greedy,
+            temperature=0.7 if not self.cfg.greedy else 0.0,
+            top_p=0.95 if not self.cfg.greedy else None,
+        )
         obj, err = parse_envelope(raw)
         return obj, raw
 
