@@ -2,7 +2,7 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "title": "Agent Envelope",
   "type": "object",
-  "required": ["status", "tag", "content", "final_solution"],
+  "required": ["status", "tag", "final_solution"],
   "properties": {
     "status": {
       "type": "string",

@@ -1,10 +1,11 @@
 from __future__ import annotations
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, ConfigDict
 from typing import Optional, Dict, Any
 
 class FinalSolution(BaseModel):
     canonical_text: str
     sha256: Optional[str] = None
+    model_config = ConfigDict(extra="allow")
 
 class Envelope(BaseModel):
     tag: str = Field(pattern=r"^\[(CONTACT|SOLVED)\]$")
