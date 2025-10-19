@@ -1,10 +1,43 @@
 from __future__ import annotations
 from typing import Dict, Any, Tuple, Optional, List
+import inspect
+from functools import lru_cache
+
 from pydantic import ValidationError
+
 from .schemas import Envelope
 from .canonicalize import canonicalize_for_hash
 from .utils import to_json, sha256_hex
 from .sanitize import repair_envelope
+from .strategies import Strategy
+
+
+@lru_cache(None)
+def _step_accepts_preparation(agent_cls) -> bool:
+    try:
+        sig = inspect.signature(agent_cls.step)
+    except (TypeError, ValueError):
+        return False
+    for param in sig.parameters.values():
+        if param.kind == inspect.Parameter.VAR_KEYWORD:
+            return True
+        if param.name == "preparation" and param.kind in (
+            inspect.Parameter.POSITIONAL_OR_KEYWORD,
+            inspect.Parameter.KEYWORD_ONLY,
+        ):
+            return True
+    return False
+
+
+def _strategy_for(agent) -> Strategy:
+    strat = getattr(agent, "strategy", None)
+    return strat if isinstance(strat, Strategy) else Strategy(name=getattr(agent, "name", "agent"))
+
+
+def _call_step(agent, task: str, transcript: List[Dict[str, Any]], preparation: Dict[str, Any]):
+    if _step_accepts_preparation(type(agent)):
+        return agent.step(task, transcript, preparation=preparation)
+    return agent.step(task, transcript)
 
 def _checked(env_dict: Dict[str, Any]) -> Envelope:
     try:
@@ -34,16 +67,118 @@ def run_controller(task: str, agent_a, agent_b, max_rounds: int = 8, kind: Optio
     last_a: Optional[Envelope] = None
     last_b: Optional[Envelope] = None
 
-    for r in range(1, max_rounds + 1):
+    strategy_a = _strategy_for(agent_a)
+    strategy_b = _strategy_for(agent_b)
+    eff_max_rounds = min(max_rounds, strategy_a.max_rounds or max_rounds, strategy_b.max_rounds or max_rounds)
+
+    for r in range(1, eff_max_rounds + 1):
         # Agent A step
-        env_a_raw, _ = agent_a.step(task, transcript)
-        env_a = _checked(env_a_raw)
-        transcript.append({"r": r, "actor": "a", "envelope": env_a.model_dump()})
+        prep_a = strategy_a.prepare_prompt(
+            task,
+            transcript,
+            actor="a",
+            agent_name=getattr(agent_a, "name", "agent_a"),
+        )
+        env_a_raw, raw_a = _call_step(agent_a, task, transcript, prep_a)
+        env_a_checked = _checked(env_a_raw)
+        validation_a = strategy_a.validate_message(
+            env_a_checked,
+            raw=raw_a,
+            original=env_a_raw,
+            transcript=transcript,
+            actor="a",
+            agent_name=getattr(agent_a, "name", "agent_a"),
+        )
+        env_a_processed, post_meta_a = strategy_a.postprocess(
+            env_a_checked,
+            raw=raw_a,
+            validation=validation_a,
+            transcript=transcript,
+            actor="a",
+            agent_name=getattr(agent_a, "name", "agent_a"),
+        )
+        env_a = env_a_processed if isinstance(env_a_processed, Envelope) else _checked(env_a_processed)
+        stop_a, reason_a = strategy_a.should_stop(
+            env_a,
+            validation=validation_a,
+            transcript=transcript,
+            actor="a",
+            agent_name=getattr(agent_a, "name", "agent_a"),
+        )
+        transcript.append(
+            {
+                "r": r,
+                "actor": "a",
+                "envelope": env_a.model_dump(),
+                "raw": raw_a,
+                "strategy": {
+                    "name": strategy_a.name,
+                    "max_rounds": strategy_a.max_rounds,
+                    "decoding": strategy_a.decoding,
+                    "metadata": getattr(strategy_a, "metadata", {}),
+                    "hooks": {
+                        "prepare": prep_a,
+                        "validation": validation_a,
+                        "postprocess": post_meta_a,
+                        "should_stop": {"stop": stop_a, "reason": reason_a},
+                    },
+                },
+            }
+        )
 
         # Agent B step
-        env_b_raw, _ = agent_b.step(task, transcript)
-        env_b = _checked(env_b_raw)
-        transcript.append({"r": r, "actor": "b", "envelope": env_b.model_dump()})
+        prep_b = strategy_b.prepare_prompt(
+            task,
+            transcript,
+            actor="b",
+            agent_name=getattr(agent_b, "name", "agent_b"),
+        )
+        env_b_raw, raw_b = _call_step(agent_b, task, transcript, prep_b)
+        env_b_checked = _checked(env_b_raw)
+        validation_b = strategy_b.validate_message(
+            env_b_checked,
+            raw=raw_b,
+            original=env_b_raw,
+            transcript=transcript,
+            actor="b",
+            agent_name=getattr(agent_b, "name", "agent_b"),
+        )
+        env_b_processed, post_meta_b = strategy_b.postprocess(
+            env_b_checked,
+            raw=raw_b,
+            validation=validation_b,
+            transcript=transcript,
+            actor="b",
+            agent_name=getattr(agent_b, "name", "agent_b"),
+        )
+        env_b = env_b_processed if isinstance(env_b_processed, Envelope) else _checked(env_b_processed)
+        stop_b, reason_b = strategy_b.should_stop(
+            env_b,
+            validation=validation_b,
+            transcript=transcript,
+            actor="b",
+            agent_name=getattr(agent_b, "name", "agent_b"),
+        )
+        transcript.append(
+            {
+                "r": r,
+                "actor": "b",
+                "envelope": env_b.model_dump(),
+                "raw": raw_b,
+                "strategy": {
+                    "name": strategy_b.name,
+                    "max_rounds": strategy_b.max_rounds,
+                    "decoding": strategy_b.decoding,
+                    "metadata": getattr(strategy_b, "metadata", {}),
+                    "hooks": {
+                        "prepare": prep_b,
+                        "validation": validation_b,
+                        "postprocess": post_meta_b,
+                        "should_stop": {"stop": stop_b, "reason": reason_b},
+                    },
+                },
+            }
+        )
 
         # Handshake acceptance paths (either direction)
         if last_b:
