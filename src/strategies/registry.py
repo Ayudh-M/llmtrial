@@ -368,8 +368,10 @@ register_strategy(
         },
         prompt_decorators=(
             _decorate_append(
-                "Use the grammar 'INTENT: content => NEXT_ACTION'. Allowed intents:"
-                " DEFINE, PLAN, EXECUTE, REVISE, ASK, CONFIRM, SOLVED."
+                (
+                    "Use the grammar 'INTENT: content => NEXT_ACTION'. Allowed intents: "
+                    "DEFINE, PLAN, EXECUTE, REVISE, ASK, CONFIRM, SOLVED."
+                )
             ),
         ),
         controller_behaviors=(

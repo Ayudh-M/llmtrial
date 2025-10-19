@@ -51,3 +51,16 @@ def test_emergent_dsl_transcript_contains_parse():
     result = run_controller("Use DSL", a, b, max_rounds=1)
     entry = result["transcript"][0]
     assert entry["strategy"]["dsl"]["intent"] == "PLAN"
+
+
+def test_emergent_dsl_requires_solved_for_consensus():
+    strategy = build_strategy("emergent_dsl")
+    a = MockAgent("A", "Shared answer", strategy=strategy)
+    b = MockAgent("B", "Shared answer", strategy=strategy)
+
+    interim = run_controller("Use DSL", a, b, max_rounds=1)
+    assert interim["status"] == "NO_CONSENSUS"
+
+    final = run_controller("Use DSL", a, b, max_rounds=2)
+    assert final["status"] == "CONSENSUS"
+    assert final["canonical_text"] == "Shared answer"

@@ -112,6 +112,7 @@ def run_controller(
     analytics: Dict[str, Counter] = {"a": Counter(), "b": Counter()}
     final_json: Dict[str, str] = {}
     final_text: Dict[str, str] = {}
+    final_dsl: Dict[str, str] = {}
     final_entries: Dict[str, Dict[str, Any]] = {}
 
     agents = [(agent_a, strategy_a, "a"), (agent_b, strategy_b, "b")]
@@ -156,7 +157,19 @@ def run_controller(
                 text, extras = _process_text_message(strategy, message)
                 entry["text"] = text
                 entry["strategy"].update(extras)
-                final_text[actor_key] = text
+
+                if strategy.metadata.get("requires_dsl"):
+                    dsl_info = extras.get("dsl", {}) if isinstance(extras, dict) else {}
+                    if (
+                        isinstance(dsl_info, dict)
+                        and dsl_info.get("intent") == "SOLVED"
+                        and isinstance(dsl_info.get("content"), str)
+                        and dsl_info["content"].strip()
+                    ):
+                        final_dsl[actor_key] = dsl_info["content"].strip()
+                else:
+                    if text:
+                        final_text[actor_key] = text
                 final_entries[actor_key] = entry
 
             transcript.append(entry)
@@ -165,6 +178,9 @@ def run_controller(
     canonical_text: Optional[str] = None
     if final_json.get("a") and final_json.get("b") and final_json["a"] == final_json["b"]:
         canonical_text = final_json["a"]
+        status = "CONSENSUS"
+    elif final_dsl.get("a") and final_dsl.get("b") and final_dsl["a"] == final_dsl["b"]:
+        canonical_text = final_dsl["a"]
         status = "CONSENSUS"
     elif final_text.get("a") and final_text.get("b") and final_text["a"] == final_text["b"]:
         canonical_text = final_text["a"]

@@ -53,7 +53,9 @@ class MockAgent:
 
     def step(self, task: str, transcript: List[Dict[str, Any]]) -> Tuple[Any, str]:
         self._turn += 1
-        solved = self._turn > 1 or not self.strategy.json_only
+        solved = self._turn > 1
+        if not self.strategy.json_only and not self.strategy.metadata.get("requires_dsl"):
+            solved = True
 
         if self.strategy.json_only:
             envelope = self._json_envelope(solved)
@@ -62,7 +64,11 @@ class MockAgent:
 
         # Text-only strategies
         if self.strategy.metadata.get("requires_dsl"):
-            text = f"PLAN: {self.answer} => EXECUTE"
+            intent = "SOLVED" if solved else "PLAN"
+            if intent == "SOLVED":
+                text = f"SOLVED: {self.answer}"
+            else:
+                text = f"PLAN: {self.answer} => EXECUTE"
         else:
             text = f"Answer: {self.answer}" if solved else "Considering..."
         return text, text
