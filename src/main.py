@@ -190,7 +190,14 @@ def main() -> None:
     except KeyError:
         print("[error] Scenario is missing the 'strategy' field.", file=sys.stderr)
         sys.exit(2)
-    strategy = build_strategy(strat_cfg)
+    strat_overrides: Dict[str, Any] = {}
+    scenario_overrides = scenario.get("strategy_overrides")
+    if isinstance(scenario_overrides, dict):
+        strat_overrides.update(scenario_overrides)
+    for key in ("decoding", "json_envelope_schema", "max_rounds", "consensus_mode"):
+        if key in scenario and key not in strat_overrides:
+            strat_overrides[key] = scenario[key]
+    strategy = build_strategy(strat_cfg, overrides=strat_overrides)
 
     extension = extension_from_config(scenario.get("dsl_extensions"))
     dsl_validator = strategy.dsl_spec.create_validator(extension)
@@ -209,6 +216,15 @@ def main() -> None:
         agent_a = MockAgent("A", solution_text=mock_solution)
         agent_b = MockAgent("B", solution_text=mock_solution)
         result = run_controller(task_text, agent_a, agent_b, max_rounds=strategy.max_rounds, kind=kind, dsl_validator=dsl_validator)
+        result = run_controller(
+            task_text,
+            agent_a,
+            agent_b,
+            max_rounds=strategy.max_rounds,
+            kind=kind,
+            schema_validator=strategy.envelope_validator,
+            strategy=strategy,
+        )
     else:
         # Real models path: load roleset + models
         roleset_path = scenario.get("roleset")
@@ -255,6 +271,15 @@ def main() -> None:
 
         # Controller
         result = run_controller(task_text, agent_a, agent_b, max_rounds=strategy.max_rounds, kind=kind, dsl_validator=dsl_validator)
+        result = run_controller(
+            task_text,
+            agent_a,
+            agent_b,
+            max_rounds=strategy.max_rounds,
+            kind=kind,
+            schema_validator=strategy.envelope_validator,
+            strategy=strategy,
+        )
 
     # 3) Persist artifact
     out_prefix = f"{_now_stamp()}_{args.scenario}"

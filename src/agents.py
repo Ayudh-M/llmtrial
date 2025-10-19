@@ -6,6 +6,7 @@ from .model_loader import load_causal_lm, generate_json_only, build_inputs, _ren
 from .utils import parse_envelope
 from .json_enforcer import validate_envelope, coerce_minimal_defaults
 from .strategies import REGISTRY as STRATS
+from .pseudocode import augment_system_prompt
 
 @dataclass
 class Agent:
@@ -16,11 +17,12 @@ class Agent:
     system_prompt: str
     seed: int = 7
     max_new_tokens: int = 768
-    strategy_id: str = "strategy-01"
+    strategy_id: str = "S1"
 
     def __post_init__(self):
         self.tok, self.model = load_causal_lm(self.model_id, seed=self.seed)
         self.cfg = STRATS.get(self.strategy_id, STRATS["strategy-01"])
+        self.system_prompt = augment_system_prompt(self.system_prompt)
 
     def _build_user_prompt(self, task: str, transcript: List[Dict[str, Any]]) -> str:
         # Include last peer [CONTACT] or request.to_peer and any arbiter hint
@@ -43,11 +45,19 @@ class Agent:
         return task
 
     def _gen_once(self, user_prompt: str, max_new_tokens: int) -> Tuple[Dict[str,Any] | None, str]:
-        raw = generate_json_only(self.tok, self.model, self.system_prompt, user_prompt,
-                                 max_new_tokens=max_new_tokens,
-                                 do_sample=not self.cfg.greedy,
-                                 temperature=0.7 if not self.cfg.greedy else 0.0,
-                                 top_p=0.95 if not self.cfg.greedy else 1.0)
+        messages = [
+            {"role": "system", "content": self.system_prompt},
+            {"role": "user", "content": user_prompt},
+        ]
+        raw = generate_json_only(
+            self.tok,
+            self.model,
+            messages,
+            max_new_tokens=max_new_tokens,
+            do_sample=not self.cfg.greedy,
+            temperature=0.7 if not self.cfg.greedy else 0.0,
+            top_p=0.95 if not self.cfg.greedy else None,
+        )
         obj, err = parse_envelope(raw)
         return obj, raw
 

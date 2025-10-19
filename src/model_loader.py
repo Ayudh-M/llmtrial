@@ -1,5 +1,5 @@
 from __future__ import annotations
-from typing import List, Dict, Any, Optional, Tuple
+from typing import List, Dict, Any, Optional
 import os, torch
 from transformers import AutoTokenizer, AutoModelForCausalLM
 
@@ -53,18 +53,82 @@ def build_inputs(tokenizer, messages_or_text, add_generation_prompt: bool = True
     return tokenizer(prompt, return_tensors="pt").input_ids
 
 @torch.inference_mode()
-def _generate(tokenizer, model, messages, max_new_tokens=256, temperature=0.0, do_sample: Optional[bool]=None):
+def _generate(
+    tokenizer,
+    model,
+    messages,
+    max_new_tokens: int = 256,
+    temperature: float = 0.0,
+    do_sample: Optional[bool] = None,
+    top_p: Optional[float] = None,
+    top_k: Optional[int] = None,
+):
+def _generate(tokenizer, model, messages, max_new_tokens=256, temperature=0.0, do_sample: Optional[bool]=None, **gen_kwargs):
     if do_sample is None:
         do_sample = bool(temperature and float(temperature) > 0.0)
     input_ids = build_inputs(tokenizer, messages, add_generation_prompt=True)
     input_ids = input_ids.to(model.device)
+    gen_kwargs: Dict[str, Any] = {
+        "do_sample": do_sample,
+        "temperature": float(temperature or 0.0),
+        "max_new_tokens": int(max_new_tokens or 256),
+    }
+    if top_p is not None:
+        gen_kwargs["top_p"] = float(top_p)
+    if top_k is not None:
+        gen_kwargs["top_k"] = int(top_k)
     out = model.generate(
         input_ids=input_ids,
-        do_sample=do_sample,
-        temperature=float(temperature or 0.0),
-        max_new_tokens=int(max_new_tokens or 256)
+        **gen_kwargs,
     )
     return tokenizer.decode(out[0], skip_special_tokens=True)
 
-def generate_json_only(tokenizer, model, messages: List[Dict[str,str]], max_new_tokens: int = 256, temperature: float = 0.0) -> str:
-    return _generate(tokenizer, model, messages, max_new_tokens=max_new_tokens, temperature=temperature, do_sample=False)
+def generate_json_only(
+    tokenizer,
+    model,
+    messages: List[Dict[str, str]],
+    max_new_tokens: int = 256,
+    temperature: float = 0.0,
+    do_sample: Optional[bool] = None,
+    top_p: Optional[float] = None,
+    top_k: Optional[int] = None,
+) -> str:
+    gen_kwargs.setdefault("max_new_tokens", int(max_new_tokens or 256))
+    gen_kwargs.setdefault("temperature", float(temperature or 0.0))
+    gen_kwargs.setdefault("do_sample", do_sample)
+    out = model.generate(input_ids=input_ids, **gen_kwargs)
+    return tokenizer.decode(out[0], skip_special_tokens=True)
+
+
+def generate_json_only(
+    tokenizer,
+    model,
+    messages_or_system,
+    user_prompt: Optional[str] = None,
+    *,
+    decoding: Optional[Dict[str, Any]] = None,
+    **legacy_kwargs,
+) -> str:
+    if isinstance(messages_or_system, list):
+        messages = messages_or_system
+    else:
+        messages = [
+            {"role": "system", "content": str(messages_or_system)},
+            {"role": "user", "content": str(user_prompt or "")},
+        ]
+    decode_cfg: Dict[str, Any] = dict(decoding or {})
+    decode_cfg.update(legacy_kwargs)
+    max_new_tokens = decode_cfg.pop("max_new_tokens", 256)
+    temperature = decode_cfg.pop("temperature", 0.0)
+    do_sample = decode_cfg.pop("do_sample", None)
+    return _generate(
+        tokenizer,
+        model,
+        messages,
+        max_new_tokens=max_new_tokens,
+        temperature=temperature,
+        do_sample=do_sample,
+        top_p=top_p,
+        top_k=top_k,
+        **decode_cfg,
+    )
