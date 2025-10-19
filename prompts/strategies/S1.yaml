@@ -10,3 +10,61 @@ decoding:
   max_new_tokens: 256
 max_rounds: 8
 consensus_mode: review_handshake
+dsl:
+  grammar: |
+    Envelope ::= {
+      "role": STRING,
+      "domain": STRING,
+      "task_understanding": STRING,
+      "public_message": STRING,
+      "artifact": Artifact,
+      "needs_from_peer": Needs,
+      "handoff_to": STRING,
+      "status": Status,
+      "tag": Tag,
+      "content": OBJECT?,
+      "final_solution": FinalSolution?
+    }
+    Artifact ::= {
+      "type": ArtifactType,
+      "content": OBJECT
+    }
+    Needs ::= LIST (STRING)
+    FinalSolution ::= { "canonical_text": STRING, "sha256": STRING? }
+    ArtifactType ::= "component_spec" | "code_patch" | "outline" | "fact_pack" | "source_pack" | "plan" | "dataset" | "results"
+    Status ::= "WORKING" | "NEED_PEER" | "PROPOSED" | "READY_TO_SOLVE" | "REVISED" | "SOLVED"
+    Tag ::= "[CONTACT]" | "[SOLVED]"
+  keywords:
+    - role
+    - domain
+    - task_understanding
+    - public_message
+    - artifact
+    - artifact.type
+    - artifact.content
+    - needs_from_peer
+    - handoff_to
+    - status
+    - tag
+    - final_solution
+    - final_solution.canonical_text
+  artifact_types:
+    - component_spec
+    - code_patch
+    - outline
+    - fact_pack
+    - source_pack
+    - plan
+    - dataset
+    - results
+  allowed_status:
+    - WORKING
+    - NEED_PEER
+    - PROPOSED
+    - READY_TO_SOLVE
+    - REVISED
+    - SOLVED
+  allowed_tags:
+    - "[CONTACT]"
+    - "[SOLVED]"
+
