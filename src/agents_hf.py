@@ -5,6 +5,7 @@ from .model_loader import generate_json_only
 from .strategies import Strategy
 from .sanitize import repair_envelope
 from .utils import ALLOWED_PERFORMATIVES
+from .pseudocode import augment_system_prompt
 
 
 _PERFORMATIVE_LIST = ", ".join(ALLOWED_PERFORMATIVES)
@@ -35,7 +36,7 @@ def _extract_json(text: str) -> Optional[Dict[str, Any]]:
 class HFChatAgent:
     def __init__(self, name: str, system_prompt: str, tokenizer, model, strategy: Strategy):
         self.name = name
-        self.system_prompt = system_prompt
+        self.system_prompt = augment_system_prompt(system_prompt)
         self.tokenizer = tokenizer
         self.model = model
         self.strategy = strategy
@@ -47,6 +48,7 @@ class HFChatAgent:
             last = transcript[-1]
             peer_context = json.dumps(last.get("envelope", {}), ensure_ascii=False)
         usr = f"Task: {task}\nPeer context: {peer_context}\nReturn ONLY the JSON object per schema."
+        usr = self.strategy.decorate_prompts(usr, {"agent": self.name})
         return [{"role":"system","content":sys}, {"role":"user","content":usr}]
 
     def step(self, task: str, transcript: List[Dict[str, Any]]):

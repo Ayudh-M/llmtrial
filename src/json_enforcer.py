@@ -22,6 +22,7 @@ def coerce_minimal_defaults(obj: Dict[str, Any]) -> Dict[str, Any]:
     status = o.get("status", "WORKING")
     default_tag = "[SOLVED]" if status == "SOLVED" else "[CONTACT]"
     o.setdefault("tag", default_tag)
+    o.setdefault("tag", "[SOLVED]" if o.get("status") == "SOLVED" else "[CONTACT]")
     if o.get("status") == "SOLVED" and "final_solution" not in o:
-        o["final_solution"] = {"canonical_text": ""}
+        o["final_solution"] = {}
     return o
