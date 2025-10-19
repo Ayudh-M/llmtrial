@@ -5,8 +5,13 @@ from .strategies import Strategy
 from pydantic import ValidationError
 from .schemas import Envelope
 from .canonicalize import canonicalize_for_hash
-from .utils import to_json, sha256_hex
+from .utils import sha256_hex
 from .sanitize import repair_envelope
+from .pseudocode import (
+    PseudocodeValidationError,
+    validate_and_normalise_pseudocode,
+)
+
 
 def _checked(env_dict: Dict[str, Any]) -> Envelope:
     try:
@@ -15,6 +20,32 @@ def _checked(env_dict: Dict[str, Any]) -> Envelope:
         repaired = repair_envelope(env_dict)
         return Envelope.model_validate(repaired)
 
+def _apply_pseudocode(env: Envelope) -> Envelope:
+    fs = env.final_solution
+    if fs and isinstance(fs.canonical_text, str) and fs.canonical_text.strip():
+        try:
+            normalized, final_return = validate_and_normalise_pseudocode(
+                fs.canonical_text
+            )
+            fs.canonical_text = normalized
+            setattr(fs, "return_value", final_return)
+        except PseudocodeValidationError as exc:
+            setattr(fs, "return_value", "")
+            env.content = env.content or {}
+            env.content.setdefault("pseudocode_error", str(exc))
+    return env
+
+
+def _final_return_value(env: Envelope) -> Optional[str]:
+    if env.final_solution is None:
+        return None
+    ret = getattr(env.final_solution, "return_value", None)
+    if isinstance(ret, str) and ret.strip():
+        return ret.strip()
+    text = env.final_solution.canonical_text or ""
+    return text.strip() or None
+
+
 def _canon_and_hash(text: str, kind: Optional[str]) -> Tuple[str, str]:
     c = canonicalize_for_hash(text or "", kind)
     return c, sha256_hex(c)
@@ -22,14 +53,24 @@ def _canon_and_hash(text: str, kind: Optional[str]) -> Tuple[str, str]:
 def _handshake_accept(prev_env: Envelope, curr_env: Envelope, kind: Optional[str]) -> Optional[str]:
     """If curr_env is a SOLVED+ACCEPT that copies prev_env's canonical_text, return canonical; else None."""
     try:
-        if curr_env.tag == "[SOLVED]" and curr_env.status == "SOLVED" and curr_env.content and            str(curr_env.content.get("verdict", "")).upper() == "ACCEPT" and curr_env.final_solution and prev_env.final_solution:
-            ca = canonicalize_for_hash(prev_env.final_solution.canonical_text, kind)
-            cb = canonicalize_for_hash(curr_env.final_solution.canonical_text, kind)
+        verdict = str(curr_env.content.get("verdict", "")) if curr_env.content else ""
+        if (
+            curr_env.tag == "[SOLVED]"
+            and curr_env.status == "SOLVED"
+            and verdict.upper() == "ACCEPT"
+            and curr_env.final_solution
+            and prev_env.final_solution
+        ):
+            prev_return = _final_return_value(prev_env) or ""
+            curr_return = _final_return_value(curr_env) or ""
+            ca = canonicalize_for_hash(prev_return, kind)
+            cb = canonicalize_for_hash(curr_return, kind)
             if ca == cb and ca != "":
                 return ca
     except Exception:
         pass
     return None
+
 
 def run_controller(task: str, agent_a, agent_b, max_rounds: int = 8, kind: Optional[str] = None) -> Dict[str, Any]:
     transcript: List[Dict[str, Any]] = []
@@ -52,12 +93,12 @@ def run_controller(task: str, agent_a, agent_b, max_rounds: int = 8, kind: Optio
 
         # Agent A step
         env_a_raw, _ = agent_a.step(task, transcript)
-        env_a = _checked(env_a_raw)
+        env_a = _apply_pseudocode(_checked(env_a_raw))
         transcript.append({"r": r, "actor": "a", "envelope": env_a.model_dump()})
 
         # Agent B step
         env_b_raw, _ = agent_b.step(task, transcript)
-        env_b = _checked(env_b_raw)
+        env_b = _apply_pseudocode(_checked(env_b_raw))
         transcript.append({"r": r, "actor": "b", "envelope": env_b.model_dump()})
 
         if strategy:
@@ -77,8 +118,8 @@ def run_controller(task: str, agent_a, agent_b, max_rounds: int = 8, kind: Optio
                 return {"status": "CONSENSUS", "rounds": r, "canonical_text": c, "sha256": h, "transcript": transcript}
 
         # Equality fallback if both produced final solutions this round
-        final_a = env_a.final_solution.canonical_text if (env_a.final_solution and env_a.final_solution.canonical_text) else None
-        final_b = env_b.final_solution.canonical_text if (env_b.final_solution and env_b.final_solution.canonical_text) else None
+        final_a = _final_return_value(env_a)
+        final_b = _final_return_value(env_b)
         if final_a and final_b:
             ca, ha = _canon_and_hash(final_a, kind)
             cb, hb = _canon_and_hash(final_b, kind)
