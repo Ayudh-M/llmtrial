@@ -41,8 +41,27 @@ class HFChatAgent:
         self.model = model
         self.strategy = strategy
 
-    def _messages(self, task: str, transcript: List[Dict[str, Any]]):
-        sys = self.system_prompt + "\n\n" + JSON_GUIDE if self.strategy.json_only else self.system_prompt
+    def _messages(
+        self,
+        task: str,
+        transcript: List[Dict[str, Any]],
+        preparation: Optional[Dict[str, Any]] = None,
+    ) -> List[Dict[str, str]]:
+        prep = preparation or {}
+        sys_parts: List[str] = []
+        if prep.get("system_prefix"):
+            sys_parts.append(str(prep["system_prefix"]))
+        sys_parts.append(self.system_prompt)
+        if self.strategy.json_only and not prep.get("omit_json_guide"):
+            sys_parts.append(JSON_GUIDE)
+        if prep.get("system_suffix"):
+            sys_parts.append(str(prep["system_suffix"]))
+        if prep.get("format_hint"):
+            sys_parts.append(str(prep["format_hint"]))
+        if prep.get("grammar"):
+            sys_parts.append("Grammar:\n" + str(prep["grammar"]))
+        system_prompt = "\n\n".join([s for s in sys_parts if s])
+
         peer_context = "{}"
         if transcript:
             last = transcript[-1]
@@ -51,13 +70,29 @@ class HFChatAgent:
         usr = self.strategy.decorate_prompts(usr, {"agent": self.name})
         return [{"role":"system","content":sys}, {"role":"user","content":usr}]
 
-    def step(self, task: str, transcript: List[Dict[str, Any]]):
-        msgs = self._messages(task, transcript)
-        raw = generate_json_only(
-            self.tokenizer, self.model, msgs,
-            max_new_tokens=(self.strategy.decoding or {}).get("max_new_tokens", 256),
-            temperature=(self.strategy.decoding or {}).get("temperature", 0.0)
-        )
+        user_parts: List[str] = []
+        if prep.get("user_prefix"):
+            user_parts.append(str(prep["user_prefix"]))
+        base = f"Task: {task}\nPeer context: {peer_context}\nReturn ONLY the JSON object per schema."
+        user_parts.append(base)
+        if prep.get("user_suffix"):
+            user_parts.append(str(prep["user_suffix"]))
+        if prep.get("extra_user_instructions"):
+            user_parts.append(str(prep["extra_user_instructions"]))
+        user_prompt = "\n\n".join([p for p in user_parts if p])
+        return [{"role": "system", "content": system_prompt}, {"role": "user", "content": user_prompt}]
+
+    def step(
+        self,
+        task: str,
+        transcript: List[Dict[str, Any]],
+        preparation: Optional[Dict[str, Any]] = None,
+    ):
+        msgs = self._messages(task, transcript, preparation)
+        decoding = dict(self.strategy.decoding or {})
+        if preparation and preparation.get("decoding_override"):
+            decoding.update(preparation["decoding_override"])
+        raw = generate_json_only(self.tokenizer, self.model, msgs, decoding=decoding)
         env = _extract_json(raw) or {"status": "WORKING", "tag": "[CONTACT]", "content": {"note": "fallback"}}
         env = repair_envelope(env)
         return env, raw
