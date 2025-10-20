@@ -2,7 +2,8 @@
 from src.json_enforcer import validate_envelope, coerce_minimal_defaults
 from src.schemas import get_envelope_validator
 
-SCHEMA_VALIDATOR = get_envelope_validator("schemas/envelope.schema.json")
+SCHEMA = "schemas/envelope.schema.json"
+SCHEMA_VALIDATOR = get_envelope_validator(SCHEMA)
 
 def test_envelope_validation_happy():
     obj = {
