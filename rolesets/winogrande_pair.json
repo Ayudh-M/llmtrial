@@ -4,14 +4,14 @@
       "name": "agent_a",
       "role": "Winogrande Reasoner",
       "domain": "coref",
-      "model": "mistralai/Mistral-7B-Instruct-v0.2",
+      "model": "mistralai/Mistral-7B-Instruct-v0.3",
       "pack": "winogrande_reasoner"
     },
     {
       "name": "agent_b",
       "role": "Coreference Auditor",
       "domain": "qa",
-      "model": "mistralai/Mistral-7B-Instruct-v0.2",
+      "model": "mistralai/Mistral-7B-Instruct-v0.3",
       "pack": "coref_auditor"
     }
   ]

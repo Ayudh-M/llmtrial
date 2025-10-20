@@ -4,14 +4,14 @@
       "name": "agent_a",
       "role": "Headline Summarizer",
       "domain": "summarization",
-      "model": "mistralai/Mistral-7B-Instruct-v0.2",
+      "model": "mistralai/Mistral-7B-Instruct-v0.3",
       "pack": "headline_summarizer_xsum"
     },
     {
       "name": "agent_b",
       "role": "Headline Faithfulness Auditor",
       "domain": "qa",
-      "model": "mistralai/Mistral-7B-Instruct-v0.2",
+      "model": "mistralai/Mistral-7B-Instruct-v0.3",
       "pack": "headline_faithfulness_auditor"
     }
   ]

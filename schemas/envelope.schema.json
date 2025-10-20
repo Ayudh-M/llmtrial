@@ -6,7 +6,6 @@
     "status",
     "tag"
   ],
-  "required": ["status", "tag", "final_solution"],
   "properties": {
     "status": {
       "type": "string",
