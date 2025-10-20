@@ -231,27 +231,10 @@ def generate_json_only(
     return generate_chat_completion(tokenizer, model, messages, decoding=decoding)
 
 
-def load_model_and_tokenizer(
-    model_id: str,
-    *,
-    dtype: Optional[str] = None,
-    **kwargs: Any,
-) -> Tuple[Any, Any]:
-    """Compatibility shim returning the tokenizer/model pair for *model_id*.
-
-    Older entry points called :func:`load_model_and_tokenizer`; the new loader
-    exposes :func:`load_causal_lm`.  Keeping this thin wrapper avoids touching
-    downstream call sites while sharing the same caching behaviour.
-    """
-
-    return load_causal_lm(model_id, dtype=dtype, **kwargs)
-
-
 __all__ = [
     "TINY_MODEL_ID",
     "MISTRAL_MODEL_ID",
     "load_causal_lm",
-    "load_model_and_tokenizer",
     "generate_chat_completion",
     "generate_json_only",
     "build_inputs",

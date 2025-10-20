@@ -150,11 +150,7 @@ def run_controller(
                 entry["envelope"] = payload
                 entry["strategy"].update(extras)
                 final_solution = payload.get("final_solution") if isinstance(payload, dict) else None
-                if (
-                    isinstance(final_solution, dict)
-                    and payload.get("status") == "SOLVED"
-                    and final_solution.get("canonical_text")
-                ):
+                if isinstance(final_solution, dict) and final_solution.get("canonical_text"):
                     final_json[actor_key] = final_solution["canonical_text"]
                 final_entries[actor_key] = entry
             else:

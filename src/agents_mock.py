@@ -47,7 +47,8 @@ class MockAgent:
             "content": content,
             "meta": {"strategy_id": self.strategy.id},
         }
-        envelope["final_solution"] = {"canonical_text": self.answer}
+        if solved:
+            envelope["final_solution"] = {"canonical_text": self.answer}
         return envelope
 
     def step(self, task: str, transcript: List[Dict[str, Any]]) -> Tuple[Any, str]:
