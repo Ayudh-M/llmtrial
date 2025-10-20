@@ -1,20 +1,23 @@
 from __future__ import annotations
+
+"""Utility wrappers around jsonschema validation and pydantic models."""
+
 import json
 from functools import lru_cache
 from pathlib import Path
 from typing import Optional, Dict, Any, Union
 
 from jsonschema import Draft7Validator
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, ConfigDict
 
 ROOT = Path(__file__).resolve().parents[1]
-from pydantic import BaseModel, Field, ConfigDict
-from typing import Optional, Dict, Any
+
 
 class FinalSolution(BaseModel):
     canonical_text: str
     sha256: Optional[str] = None
     model_config = ConfigDict(extra="allow")
+
 
 class Envelope(BaseModel):
     tag: str = Field(pattern=r"^\[(CONTACT|SOLVED)\]$")
@@ -22,11 +25,15 @@ class Envelope(BaseModel):
     content: Optional[Dict[str, Any]] = None
     final_solution: Optional[FinalSolution] = None
 
-    def is_solved(self) -> bool:
-        return self.tag == "[SOLVED]" and self.status == "SOLVED" and self.final_solution is not None
+    model_config = ConfigDict(extra="allow")
 
-# Allowed enums (lightweight guard)
-ALLOWED_STATUS = {"WORKING","NEED_PEER","PROPOSED","READY_TO_SOLVE","SOLVED"}
+    def is_solved(self) -> bool:
+        return (
+            self.tag == "[SOLVED]"
+            and self.status == "SOLVED"
+            and self.final_solution is not None
+            and bool(self.final_solution.canonical_text)
+        )
 
 
 SchemaLike = Union[str, Path]
@@ -49,7 +56,6 @@ def _load_json_schema(schema_path: str) -> Draft7Validator:
 
 
 def get_envelope_validator(schema_ref: Optional[SchemaLike]) -> Optional[Draft7Validator]:
-    """Return a cached jsonschema validator for the given schema reference."""
     if not schema_ref:
         return None
     path = _resolve_schema_path(schema_ref)

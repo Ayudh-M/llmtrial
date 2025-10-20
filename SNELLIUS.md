@@ -6,15 +6,15 @@ This repo ships a SLURM script `run_gpu_hf.job` tuned for Snellius' `gpu` partit
 ```bash
 ssh <user>@snellius.surf.nl
 git clone <your_repo_url>  # or upload this tarball
-cd llm-orchestrator-main
+cd llmtrial
 mkdir -p logs runs
 ```
 
-## 2) Submit a smoke test with Mistral-7B-v0.1
+## 2) Submit a smoke test with Mistral-7B
 ```bash
-sbatch run_gpu_hf.job mistral_v01_smoketest
+sbatch run_gpu_hf.job mistral_math_smoke
 # or override models explicitly:
-# sbatch run_gpu_hf.job mistralai/Mistral-7B-v0.1 mistralai/Mistral-7B-v0.1 bfloat16
+# sbatch run_gpu_hf.job mistralai/Mistral-7B-Instruct-v0.3 mistralai/Mistral-7B-Instruct-v0.3 bf16
 ```
 
 ## 3) Inspect logs and outputs
@@ -26,5 +26,6 @@ ls -lah runs/
 
 ### Notes
 - The job script sets `HF_HOME` (and `TRANSFORMERS_CACHE`, `HF_DATASETS_CACHE`) to `$TMPDIR/hf` if available (node-local scratch), else `/scratch-shared/$USER/hf`.
-- For base models like `mistralai/Mistral-7B-v0.1` (no chat template), we fall back to a minimal, safe prompt format.
+- For instruction-tuned models like `mistralai/Mistral-7B-Instruct-v0.3`, the job uses the chat template automatically.
 - Outputs are written to `runs/<timestamp>_<scenario>.json` with the final envelopes and SHA-256 of the canonical text.
+

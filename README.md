@@ -1,4 +1,3 @@
-````md
 # Snellius Clean-Start & Run Guide
 
 This is a copy-paste friendly checklist for teammates to **start clean** on Snellius, clone the repo, set up a fresh environment, and run a job on **H100**. It uses the **2025** software stack.
@@ -13,7 +12,7 @@ SSH into Snellius from your terminal:
 
 ```bash
 ssh your_username@snellius.surf.nl
-````
+```
 
 ---
 
@@ -24,7 +23,7 @@ ssh your_username@snellius.surf.nl
 squeue -u "$USER" | awk 'NR>1{print $1}' | xargs -r scancel
 
 # Remove previous checkout, venv, and HF caches (user-space only)
-rm -rf ~/projects/llm-orchestrator ~/.venvs/consensus ~/.cache/huggingface ~/.cache/hf
+rm -rf ~/projects/llmtrial ~/.venvs/consensus ~/.cache/huggingface ~/.cache/hf
 ```
 
 ---
@@ -32,10 +31,10 @@ rm -rf ~/projects/llm-orchestrator ~/.venvs/consensus ~/.cache/huggingface ~/.ca
 ## 2) Clone the repo
 
 ```bash
-REPO_URL="https://github.com/Ayudh-M/llm-orchestrator.git"   # change if needed
+REPO_URL="https://github.com/Ayudh-M/llmtrial.git"   # change if needed
 mkdir -p ~/projects && cd ~/projects
-git clone "$REPO_URL" llm-orchestrator
-cd llm-orchestrator
+git clone "$REPO_URL" llmtrial
+cd llmtrial
 git remote -v
 ```
 
@@ -180,10 +179,7 @@ If you want to fully reset and reclone later:
 
 ```bash
 squeue -u "$USER" | awk 'NR>1{print $1}' | xargs -r scancel
-rm -rf ~/projects/llm-orchestrator ~/.venvs/consensus ~/.cache/huggingface ~/.cache/hf
+rm -rf ~/projects/llmtrial ~/.venvs/consensus ~/.cache/huggingface ~/.cache/hf
 # then repeat from Section 2
-```
-
-```
 ```
 

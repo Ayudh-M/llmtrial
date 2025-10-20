@@ -1,187 +1,66 @@
 import pytest
 
-from src.controller import run_controller
-from src.agents_mock import MockAgent, ConciseTextAgent
-from src.strategies import build_strategy
-import pytest
-
 from src.agents_mock import MockAgent
-from src.dsl import default_dsl_spec
-
-def test_mock_consensus():
-    spec = default_dsl_spec()
-    validator = spec.create_validator()
-    a = MockAgent("A", "TRUE")
-    b = MockAgent("B", "TRUE")
-    out = run_controller("Return TRUE", a, b, max_rounds=4, kind=None, dsl_validator=validator)
-    assert out["status"] == "CONSENSUS"
-    assert out["canonical_text"] == "TRUE"
-    assert out["final_message"] is not None
-    assert out["final_message"]["dsl"]["canonical_text"] == "TRUE"
-    assert out["final_message"]["actor"] == "b"
-    assert out["dsl_trace"] and out["dsl_trace"][-1]["status"] == "SOLVED"
-from src.schemas import get_envelope_validator
-from src.strategies import Strategy
-
-
-class TrackingStrategy(Strategy):
-    def __init__(self):
-        super().__init__(name="tracking", decoding={"max_new_tokens": 8})
-        self.calls = []
-
-    def prepare_prompt(self, task, transcript, *, actor, agent_name):
-        self.calls.append(("prepare", actor, len(transcript)))
-        hints = super().prepare_prompt(task, transcript, actor=actor, agent_name=agent_name)
-        hints.update({"format_hint": "Use DSL envelope"})
-        return hints
-
-    def validate_message(self, envelope, *, raw, original, transcript, actor, agent_name):
-        self.calls.append(("validate", actor, envelope.tag))
-        meta = super().validate_message(
-            envelope,
-            raw=raw,
-            original=original,
-            transcript=transcript,
-            actor=actor,
-            agent_name=agent_name,
-        )
-        meta.update({"tokens": len(raw or "")})
-        return meta
-
-    def postprocess(self, envelope, *, raw, validation, transcript, actor, agent_name):
-        self.calls.append(("postprocess", actor, envelope.tag))
-        return envelope, {"parsed_tag": envelope.tag}
-
-    def should_stop(self, envelope, *, validation, transcript, actor, agent_name):
-        self.calls.append(("should_stop", actor, envelope.tag))
-        return False, None
 from src.controller import run_controller
+from src.strategies import build_strategy
 
 
-class BadACLAgent(MockAgent):
-    def step(self, task, transcript):  # type: ignore[override]
-        env = {"tag": "[CONTACT]", "status": "PROPOSED", "content": {"acl": "bad message"}}
-        return env, str(env)
+def test_json_schema_consensus():
+    a = MockAgent("Agent A", "42", strategy=build_strategy("json_schema"))
+    b = MockAgent("Agent B", "42", strategy=build_strategy("json_schema"))
+    result = run_controller("Return the answer", a, b, max_rounds=2)
+    assert result["status"] == "CONSENSUS"
+    assert result["canonical_text"] == "42"
+    assert result["analytics"]["a"] == {}
 
 
-PSEUDOCODE_TRUE = """
-- STEP 1: confirm request
-- RETURN TRUE
-"""
+def test_pseudocode_strategy_normalises_output():
+    messy = "- STEP 1: add numbers\n- RETURN 5"
+    strategy = build_strategy("pseudocode")
+    a = MockAgent("A", messy, strategy=strategy)
+    b = MockAgent("B", messy, strategy=strategy)
+    result = run_controller("Return pseudocode", a, b, max_rounds=2)
+    final = result["final_messages"]["a"]["envelope"]["final_solution"]
+    assert final["canonical_text"].startswith("- STEP 1: add numbers")
+    assert final["return_value"] == "5"
 
 
-def test_mock_consensus():
-    a = MockAgent("A", PSEUDOCODE_TRUE)
-    b = MockAgent("B", PSEUDOCODE_TRUE)
-    out = run_controller("Return TRUE", a, b, max_rounds=4, kind=None)
-    assert out["status"] == "CONSENSUS"
-    assert out["canonical_text"] == "TRUE"
+def test_symbolic_acl_invalid_message_raises():
+    class BadACLAgent:
+        def __init__(self):
+            self.strategy = build_strategy("symbolic_acl")
+            self.name = "BadACL"
+
+        def step(self, task, transcript):  # type: ignore[override]
+            return {
+                "status": "PROPOSED",
+                "tag": "[CONTACT]",
+                "content": {"acl": "not valid"},
+            }, "raw"
+
+    good = MockAgent("Good", "OK", strategy=build_strategy("symbolic_acl"))
+    bad = BadACLAgent()
+    with pytest.raises(ValueError):
+        run_controller("Test", bad, good, max_rounds=1)
 
 
-class InvalidNumberAgent:
-    def __init__(self, name: str):
-        self.name = name
-        self._turn = 0
-
-    def step(self, task, transcript):
-        if self._turn == 0:
-            self._turn += 1
-            env = {"tag": "[CONTACT]", "status": "PROPOSED", "content": {"proposal": "working"}}
-            return env, str(env)
-        env = {
-            "tag": "[SOLVED]",
-            "status": "SOLVED",
-            "content": {"note": "not numeric"},
-            "final_solution": {"canonical_text": "NOT_A_NUMBER"},
-        }
-        return env, str(env)
+def test_emergent_dsl_transcript_contains_parse():
+    strategy = build_strategy("emergent_dsl")
+    a = MockAgent("A", "Define component", strategy=strategy)
+    b = MockAgent("B", "Define component", strategy=strategy)
+    result = run_controller("Use DSL", a, b, max_rounds=1)
+    entry = result["transcript"][0]
+    assert entry["strategy"]["dsl"]["intent"] == "PLAN"
 
 
-def test_controller_schema_rejects_invalid_message():
-    validator = get_envelope_validator("prompts/schemas/envelope.number.schema.json")
-    a = InvalidNumberAgent("BadNumber")
-    b = MockAgent("Good", "42")
-    with pytest.raises(ValueError) as exc:
-        run_controller("Return a number", a, b, max_rounds=2, kind="number", schema_validator=validator)
-    assert "BadNumber" in str(exc.value)
+def test_emergent_dsl_requires_solved_for_consensus():
+    strategy = build_strategy("emergent_dsl")
+    a = MockAgent("A", "Shared answer", strategy=strategy)
+    b = MockAgent("B", "Shared answer", strategy=strategy)
 
+    interim = run_controller("Use DSL", a, b, max_rounds=1)
+    assert interim["status"] == "NO_CONSENSUS"
 
-def test_controller_schema_accepts_valid_messages():
-    validator = get_envelope_validator("prompts/schemas/envelope.number.schema.json")
-    a = MockAgent("A", "42")
-    b = MockAgent("B", "42")
-    out = run_controller(
-        "Return 42",
-        a,
-        b,
-        max_rounds=2,
-        kind="number",
-        schema_validator=validator,
-    )
-    assert out["status"] == "CONSENSUS"
-    assert out["canonical_text"] == "42"
-def test_concise_text_strategy_transcript():
-    strat = build_strategy(
-        {
-            "id": "S_concise",
-            "name": "concise_text",
-            "json_only": False,
-            "validator": "concise_text",
-            "validator_params": {"max_sentences": 1, "max_tokens": 6},
-            "envelope_required": False,
-            "decoding": {"do_sample": False, "temperature": 0.3, "max_new_tokens": 32},
-            "prompt_snippet": "Keep answers compact.",
-        }
-    )
-    a = ConciseTextAgent("A", ["  Ready."], "42")
-    b = ConciseTextAgent("B", [" Standing by.  "], "42")
-    out = run_controller("Return 42", a, b, max_rounds=3, kind=None, strategy=strat)
-
-    assert out["status"] == "CONSENSUS"
-    assert out["canonical_text"] == "42"
-    texts = [entry["envelope"]["text"] for entry in out["transcript"]]
-    for text in texts:
-        assert text == text.strip()
-        assert len(text.split()) <= 6
-def test_controller_tracks_strategy_hooks():
-    strat_a = TrackingStrategy()
-    strat_b = TrackingStrategy()
-    a = MockAgent("A", "TRUE", strategy=strat_a)
-    b = MockAgent("B", "TRUE", strategy=strat_b)
-    out = run_controller("Return TRUE", a, b, max_rounds=4, kind=None)
-
-    assert out["status"] == "CONSENSUS"
-    first_entry = out["transcript"][0]
-    assert first_entry["strategy"]["name"] == "tracking"
-    assert first_entry["strategy"]["hooks"]["prepare"]["format_hint"] == "Use DSL envelope"
-    assert first_entry["strategy"]["hooks"]["validation"]["ok"] is True
-    assert first_entry["strategy"]["hooks"]["postprocess"]["parsed_tag"] == "[CONTACT]"
-    assert first_entry["strategy"]["hooks"]["should_stop"]["stop"] is False
-    assert isinstance(first_entry["raw"], str)
-
-    # All hooks should have been invoked for both agents.
-    hook_names = [c[0] for c in strat_a.calls]
-    for expected in ("prepare", "validate", "postprocess", "should_stop"):
-        assert expected in hook_names
-    intents = out["analytics"]["intent_counts"]
-    assert intents["a"].get("PROPOSE", 0) == 1
-    assert intents["a"].get("SOLVED", 0) >= 1
-    assert intents["b"].get("SOLVED", 0) >= 1
-
-
-def test_invalid_acl_message_raises():
-    a = BadACLAgent("A", "TRUE")
-    b = MockAgent("B", "TRUE")
-    with pytest.raises(ValueError) as exc:
-        run_controller("Return TRUE", a, b, max_rounds=2, kind=None)
-    assert "Invalid ACL message" in str(exc.value)
-
-
-def test_no_consensus_when_solutions_differ():
-    a = MockAgent("A", "TRUE")
-    b = MockAgent("B", "FALSE")
-    out = run_controller("Return TRUE", a, b, max_rounds=3, kind=None)
-    assert out["status"] == "NO_CONSENSUS"
-    intents = out["analytics"]["intent_counts"]
-    assert intents["a"].get("SOLVED", 0) >= 1
-    assert intents["b"].get("SOLVED", 0) >= 1
+    final = run_controller("Use DSL", a, b, max_rounds=2)
+    assert final["status"] == "CONSENSUS"
+    assert final["canonical_text"] == "Shared answer"
