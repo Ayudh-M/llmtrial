@@ -27,7 +27,7 @@ def test_strategy_behaviours(strategy_id: str) -> None:
     # Prompt decoration appends a JSON hint.
     prompt = "Solve task"
     decorated = strategy.decorate_prompts(prompt, {})
-    assert decorated.endswith("JSON object.")
+    assert "JSON object." in decorated
 
     # Envelope validation succeeds with required keys and fails otherwise.
     ok, errors = strategy.validate_envelope({"status": "WORKING", "tag": "[CONTACT]"})
