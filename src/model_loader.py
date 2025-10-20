@@ -1,15 +1,21 @@
 from __future__ import annotations
 
-from typing import Any, Dict, Iterable, List, Optional, Sequence, Tuple
+from typing import Any, Dict, Mapping, Optional, Sequence, Tuple
 
 import torch
-from transformers import AutoModelForCausalLM, AutoTokenizer, PreTrainedModel, PreTrainedTokenizer
+from transformers import (
+    AutoModelForCausalLM,
+    AutoTokenizer,
+    PreTrainedModel,
+    PreTrainedTokenizer,
+)
+
 
 TINY_REPO = "roneneldan/TinyStories-1M"
 TINY_TOKENIZER = "EleutherAI/gpt-neo-125M"
 
 
-_DTYPE_ALIASES = {
+_DTYPE_ALIASES: Mapping[str, torch.dtype] = {
     "bfloat16": torch.bfloat16,
     "bf16": torch.bfloat16,
     "float16": torch.float16,
@@ -32,6 +38,8 @@ def load_model_and_tokenizer(
     dtype: Optional[str] = None,
     quant: Optional[str] = None,
 ) -> Tuple[PreTrainedTokenizer, PreTrainedModel]:
+    """Load a causal LM and tokenizer for chat-style generation."""
+
     tokenizer_ref = tokenizer_id or repo_id
     tokenizer = AutoTokenizer.from_pretrained(tokenizer_ref)
 
@@ -64,8 +72,10 @@ def build_inputs(
     *,
     add_generation_prompt: bool = True,
 ) -> torch.Tensor:
+    """Format messages according to the tokenizer's template (if any)."""
+
     if _has_chat_template(tokenizer):
-        if not isinstance(messages_or_text, Sequence):
+        if not isinstance(messages_or_text, Sequence) or not messages_or_text:
             raise TypeError("Chat templates require a list of messages.")
         return tokenizer.apply_chat_template(
             list(messages_or_text),
@@ -74,7 +84,7 @@ def build_inputs(
         )
 
     if isinstance(messages_or_text, Sequence) and messages_or_text and isinstance(messages_or_text[0], dict):
-        lines: List[str] = []
+        lines = []
         for message in messages_or_text:  # type: ignore[assignment]
             role = message.get("role", "user")
             content = message.get("content", "")
@@ -130,6 +140,8 @@ def generate_json_only(
     decoding: Optional[Dict[str, Any]] = None,
     **legacy_kwargs: Any,
 ) -> str:
+    """Generate text biased toward JSON envelopes."""
+
     if isinstance(prompt_or_messages, Sequence) and prompt_or_messages and isinstance(prompt_or_messages[0], dict):
         messages = list(prompt_or_messages)  # type: ignore[arg-type]
     else:
@@ -165,3 +177,4 @@ __all__ = [
     "generate_json_only",
     "load_model_and_tokenizer",
 ]
+
