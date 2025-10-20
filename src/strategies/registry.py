@@ -146,6 +146,14 @@ def _decorate_with_json_hint(prompt: str, context: Mapping[str, Any]) -> str:
     return prompt + suffix
 
 
+def _decorate_with_guidance(message: str) -> PromptDecorator:
+    def _decorate(prompt: str, context: Mapping[str, Any]) -> str:
+        base = _decorate_with_json_hint(prompt, context)
+        return base + "\n\n" + message
+
+    return _decorate
+
+
 def _set_controller_strategy_id(strategy_id: str) -> ControllerBehavior:
     def _apply(state: MutableMapping[str, Any]) -> None:
         state.setdefault("meta", {})["strategy_id"] = strategy_id
@@ -228,6 +236,154 @@ register_strategy(
         agent_profile=AgentProfile(greedy=True, k_samples=1, max_new_tokens=192),
         metadata={
             "title": "Quick strict JSON runs",
+        },
+    )
+)
+
+register_strategy(
+    StrategyDefinition(
+        id="S2_PLAN_EXECUTE",
+        name="plan_execute",
+        description="Planner-to-executor handshake with explicit stage reminders.",
+        json_only=True,
+        allow_cot=True,
+        max_rounds=6,
+        decoding={
+            "do_sample": False,
+            "temperature": 0.0,
+            "top_p": 1.0,
+            "max_new_tokens": 384,
+        },
+        consensus_mode="review_handshake",
+        pre_round_hooks=(
+            _set_controller_strategy_id("S2_PLAN_EXECUTE"),
+        ),
+        envelope_validators=(
+            _ensure_status,
+            _ensure_tag,
+        ),
+        prompt_decorators=(
+            _decorate_with_guidance(
+                "Stage reminder: plan first, then implementation, then testing feedback. Reference the current stage in your JSON tag."
+            ),
+        ),
+        controller_behaviors=(
+            _toggle_json_mode,
+        ),
+        agent_profile=AgentProfile(greedy=True, k_samples=1, max_new_tokens=384),
+        metadata={
+            "title": "Planner/executor/tester structured turn-taking",
+        },
+    )
+)
+
+register_strategy(
+    StrategyDefinition(
+        id="S3_SELF_REFINE",
+        name="self_refine",
+        description="Generator/critic refinement loop with actionable feedback cues.",
+        json_only=True,
+        allow_cot=True,
+        max_rounds=5,
+        decoding={
+            "do_sample": False,
+            "temperature": 0.0,
+            "top_p": 1.0,
+            "max_new_tokens": 320,
+        },
+        consensus_mode="review_handshake",
+        pre_round_hooks=(
+            _set_controller_strategy_id("S3_SELF_REFINE"),
+        ),
+        envelope_validators=(
+            _ensure_status,
+            _ensure_tag,
+        ),
+        prompt_decorators=(
+            _decorate_with_guidance(
+                "Self-refine pattern: proposer shares work, critic responds with issues, proposer revises and highlights changes."
+            ),
+        ),
+        controller_behaviors=(
+            _toggle_json_mode,
+        ),
+        agent_profile=AgentProfile(greedy=True, k_samples=1, max_new_tokens=320),
+        metadata={
+            "title": "Self-reflection refinement loop",
+        },
+    )
+)
+
+register_strategy(
+    StrategyDefinition(
+        id="S4_CONSTITUTIONAL",
+        name="constitutional_review",
+        description="Constitutional critique followed by safe editing and checklist reporting.",
+        json_only=True,
+        allow_cot=True,
+        max_rounds=5,
+        decoding={
+            "do_sample": False,
+            "temperature": 0.0,
+            "top_p": 1.0,
+            "max_new_tokens": 320,
+        },
+        consensus_mode="review_handshake",
+        pre_round_hooks=(
+            _set_controller_strategy_id("S4_CONSTITUTIONAL"),
+        ),
+        envelope_validators=(
+            _ensure_status,
+            _ensure_tag,
+        ),
+        prompt_decorators=(
+            _decorate_with_guidance(
+                "Apply the safety constitution: cite policies, then perform or reject edits with explicit checklist status."
+            ),
+        ),
+        controller_behaviors=(
+            _toggle_json_mode,
+        ),
+        agent_profile=AgentProfile(greedy=True, k_samples=1, max_new_tokens=320),
+        metadata={
+            "title": "Policy citation and safe-edit workflow",
+        },
+    )
+)
+
+register_strategy(
+    StrategyDefinition(
+        id="S5_DEBATE",
+        name="debate_review",
+        description="Peer review dialogue encouraging explicit critiques before convergence.",
+        json_only=True,
+        allow_cot=True,
+        max_rounds=6,
+        decoding={
+            "do_sample": False,
+            "temperature": 0.2,
+            "top_p": 0.9,
+            "max_new_tokens": 384,
+        },
+        consensus_mode="review_handshake",
+        pre_round_hooks=(
+            _set_controller_strategy_id("S5_DEBATE"),
+        ),
+        envelope_validators=(
+            _ensure_status,
+            _ensure_tag,
+        ),
+        prompt_decorators=(
+            _decorate_with_guidance(
+                "Debate protocol: state your position, critique your partner's reasoning, and document convergence explicitly."
+            ),
+        ),
+        controller_behaviors=(
+            _toggle_json_mode,
+        ),
+        agent_profile=AgentProfile(greedy=False, k_samples=1, max_new_tokens=384),
+        metadata={
+            "title": "Peer debate with critique tracking",
         },
     )
 )
