@@ -15,6 +15,16 @@ def test_envelope_validation_happy():
     ok, errs = validate_envelope(obj, SCHEMA_VALIDATOR)
     assert ok, errs
 
+
+def test_envelope_validation_allows_plan_tag():
+    obj = {
+        "status": "PROPOSED",
+        "tag": "[PLAN]",
+        "content": {"acl": "PLAN: outline => WAIT"},
+    }
+    ok, errs = validate_envelope(obj, SCHEMA_VALIDATOR)
+    assert ok, errs
+
 def test_envelope_missing_solution_rejected():
     obj = {"status":"SOLVED"}
     ok, errs = validate_envelope(obj, SCHEMA_VALIDATOR)

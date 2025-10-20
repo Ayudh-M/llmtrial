@@ -5,7 +5,7 @@ import json
 import sys
 import time
 from pathlib import Path
-from typing import Any, Dict, List, Mapping, Optional, Sequence, Tuple
+from typing import Any, Dict, Iterable, List, Mapping, Optional, Sequence, Tuple
 
 if __package__:
     # Package-relative imports when executed as ``python -m src.main``.
@@ -158,6 +158,132 @@ def _mock_agents(strategy: Strategy, mock_solution: str) -> Tuple[MockAgent, Moc
     return agent_a, agent_b
 
 
+def _safe_agent_name(agent: Any, fallback: str) -> str:
+    name = getattr(agent, "name", None)
+    if isinstance(name, str) and name.strip():
+        return name
+    return fallback
+
+
+def _actor_display_name(actor_key: Any, agent_pair: Tuple[Any, Any]) -> str:
+    agent_a, agent_b = agent_pair
+    if isinstance(actor_key, str):
+        key = actor_key.lower()
+        if key in {"a", "alpha"}:
+            return _safe_agent_name(agent_a, "Agent A")
+        if key in {"b", "beta"}:
+            return _safe_agent_name(agent_b, "Agent B")
+    return str(actor_key) if actor_key not in (None, "") else "Unknown"
+
+
+def _condense_text(text: Any, *, width: int = 120) -> str:
+    if not isinstance(text, str):
+        return ""
+    collapsed = " ".join(text.strip().split())
+    if len(collapsed) <= width:
+        return collapsed
+    return collapsed[: max(width - 1, 0)] + "…"
+
+
+def _format_envelope(envelope: Mapping[str, Any] | None) -> str:
+    if not isinstance(envelope, Mapping):
+        return ""
+    tag = str(envelope.get("tag") or "").strip()
+    status = str(envelope.get("status") or "").strip()
+    if tag and status:
+        return f"{tag}/{status}"
+    return tag or status
+
+
+def _final_actor_from_record(
+    record: Mapping[str, Any], result: Mapping[str, Any]
+) -> Optional[Any]:
+    actor = record.get("final_actor") if isinstance(record, Mapping) else None
+    if actor:
+        return actor
+
+    final_message = result.get("final_message") if isinstance(result, Mapping) else None
+    if isinstance(final_message, Mapping):
+        return final_message.get("actor")
+
+    return None
+
+
+def _print_run_summary(
+    record: Mapping[str, Any], result: Mapping[str, Any], agent_pair: Tuple[Any, Any]
+) -> None:
+    transcript = result.get("transcript") if isinstance(result, Mapping) else None
+    turns = len(transcript) if isinstance(transcript, Sequence) else 0
+    rounds = record.get("rounds") if isinstance(record, Mapping) else None
+    if not isinstance(rounds, int):
+        rounds = result.get("rounds") if isinstance(result, Mapping) else None
+    if not isinstance(rounds, int):
+        rounds = turns
+
+    turn_count = record.get("transcript_turns") if isinstance(record, Mapping) else None
+    if not isinstance(turn_count, int):
+        turn_count = turns
+    print(f"  rounds={rounds} turns={turn_count}")
+
+    actor_key = _final_actor_from_record(record, result)
+    actor_name = _actor_display_name(actor_key, agent_pair) if actor_key else "<none>"
+    print(f"  final_actor={actor_name}")
+
+    final_canonical = ""
+    if isinstance(record, Mapping):
+        final_canonical = str(record.get("final_canonical") or "")
+    if not final_canonical and isinstance(result, Mapping):
+        final_message = result.get("final_message")
+        if isinstance(final_message, Mapping):
+            dsl_payload = final_message.get("dsl")
+            if isinstance(dsl_payload, Mapping):
+                final_canonical = str(dsl_payload.get("canonical_text") or "")
+    if final_canonical:
+        print(f"  final_canonical={final_canonical}")
+    else:
+        print("  final_canonical=<none>")
+
+    final_message = result.get("final_message") if isinstance(result, Mapping) else None
+    if isinstance(final_message, Mapping):
+        envelope = _format_envelope(final_message.get("envelope"))
+        actor_display = _actor_display_name(final_message.get("actor"), agent_pair)
+        snippet_source = final_message.get("raw")
+        if not isinstance(snippet_source, str):
+            snippet_source = final_message.get("content")
+        snippet = _condense_text(snippet_source)
+        components = []
+        if actor_display:
+            components.append(actor_display)
+        if envelope:
+            components.append(f"[{envelope}]")
+        if snippet:
+            components.append(snippet)
+        description = " ".join(components).strip()
+        print(f"  final_message={description or '<none>'}")
+    else:
+        print("  final_message=<none>")
+
+
+def _print_transcript(transcript: Iterable[Mapping[str, Any]], agent_pair: Tuple[Any, Any]) -> None:
+    turns = list(transcript)
+    if not turns:
+        print("  (no transcript captured)")
+        return
+
+    for turn in turns:
+        round_id = turn.get("r") or turn.get("round") or "?"
+        actor_name = _actor_display_name(turn.get("actor"), agent_pair)
+        envelope = _format_envelope(turn.get("envelope"))
+        raw_text = _condense_text(turn.get("raw"))
+        if envelope:
+            line = f"  [round {round_id}] {actor_name} [{envelope}]"
+        else:
+            line = f"  [round {round_id}] {actor_name}"
+        if raw_text:
+            line = f"{line} {raw_text}"
+        print(line)
+
+
 def _run_once(
     scenario_id: str,
     scenario: Mapping[str, Any],
@@ -174,7 +300,7 @@ def _run_once(
     model_a: str,
     model_b: str,
     extra_meta: Mapping[str, Any],
-) -> Dict[str, Any]:
+) -> Tuple[Dict[str, Any], Dict[str, Any]]:
     task_text = str(scenario.get("task", "")).strip()
     if not task_text:
         raise SystemExit("Scenario task description is empty.")
@@ -201,8 +327,8 @@ def _run_once(
         extra=dict(extra_meta),
     )
 
-    record_run(result, metadata, csv_path=csv_path, jsonl_path=jsonl_path)
-    return result
+    record = record_run(result, metadata, csv_path=csv_path, jsonl_path=jsonl_path)
+    return result, record
 
 
 def main(argv: Optional[Sequence[str]] = None) -> None:
@@ -220,6 +346,11 @@ def main(argv: Optional[Sequence[str]] = None) -> None:
     parser.add_argument("--dtype", help="Model dtype override (bf16, fp16, fp32)")
     parser.add_argument("--csv-log", default=str(DEFAULT_CSV), help="Path to the summary CSV log")
     parser.add_argument("--jsonl-log", default=str(DEFAULT_JSONL), help="Path to the raw JSONL log")
+    parser.add_argument(
+        "--show-transcript",
+        action="store_true",
+        help="Print a compact transcript summary after each run",
+    )
     args = parser.parse_args(argv)
 
     try:
@@ -274,7 +405,7 @@ def main(argv: Optional[Sequence[str]] = None) -> None:
         else:
             agent_pair = _build_agents(roleset, tokenizer_pair, model_pair, strategy)
 
-        result = _run_once(
+        result, record = _run_once(
             args.scenario,
             scenario,
             strategy_id,
@@ -295,8 +426,15 @@ def main(argv: Optional[Sequence[str]] = None) -> None:
         out_path = RUNS_DIR / out_name
         out_path.write_text(_dump_json(result), encoding="utf-8")
 
-        summary = result.get("canonical_text") or "<no consensus>"
-        print(f"[{strategy_id}] status={result.get('status')} canonical={summary}")
+        summary = record.get("canonical_text") or "<no consensus>"
+        print(f"[{strategy_id}] status={record.get('status')} canonical={summary}")
+        _print_run_summary(record, result, agent_pair)
+        if args.show_transcript:
+            print("  Transcript summary:")
+            _print_transcript(result.get("transcript") or [], agent_pair)
+
+        print(f"WROTE {csv_path}")
+        print(f"WROTE {jsonl_path}")
         results.append((strategy_id, result))
 
     if len(results) > 1:
