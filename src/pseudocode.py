@@ -1,11 +1,10 @@
 from __future__ import annotations
 
-"""Helpers for enforcing structured pseudocode outputs."""
+"""Helpers for validating and normalising structured pseudocode outputs."""
 
-import re
 from dataclasses import dataclass
+import re
 from typing import Iterable, Tuple
-
 
 PSEUDOCODE_INSERT = (
     "PSEUDOCODE FORMAT (strict):\n"
@@ -37,17 +36,19 @@ class PseudocodeLine:
 ALLOWED_KEYWORDS = {"STEP", "IF", "FOR", "RETURN", "ELSE"}
 
 
-def _normalise_spacing(text: str) -> str:
-    return " ".join(text.split())
-
-
 def augment_system_prompt(base: str) -> str:
+    """Append the strict pseudocode instructions to *base* if absent."""
+
     base = (base or "").strip()
     if PSEUDOCODE_INSERT in base:
         return base
     if base:
         return base + "\n\n" + PSEUDOCODE_INSERT
     return PSEUDOCODE_INSERT
+
+
+def _normalise_spacing(text: str) -> str:
+    return " ".join(text.split())
 
 
 def _parse_line(raw: str) -> PseudocodeLine:
@@ -60,9 +61,11 @@ def _parse_line(raw: str) -> PseudocodeLine:
     body = match.group(2).strip()
     if not body:
         raise PseudocodeValidationError("Bullet body cannot be empty.")
-    keyword = body.split()[0]
+    keyword = body.split()[0].upper()
     if keyword not in ALLOWED_KEYWORDS:
-        raise PseudocodeValidationError(f"Keyword '{keyword}' is not allowed; use {sorted(ALLOWED_KEYWORDS)}.")
+        raise PseudocodeValidationError(
+            f"Keyword '{keyword}' is not allowed; use {sorted(ALLOWED_KEYWORDS)}."
+        )
     return PseudocodeLine(level=len(indent) // 2, keyword=keyword, text=body)
 
 
@@ -128,10 +131,7 @@ def _validate_structure(lines: Iterable[PseudocodeLine]) -> None:
 
 
 def validate_and_normalise_pseudocode(text: str) -> Tuple[str, str]:
-    """
-    Validate pseudocode structure and return (normalised_text, final_return_value).
-    Empty or whitespace-only text returns a pair of empty strings.
-    """
+    """Validate pseudocode structure and return ``(normalized_text, return_value)``."""
 
     if not text or not text.strip():
         return "", ""
@@ -153,4 +153,3 @@ def validate_and_normalise_pseudocode(text: str) -> Tuple[str, str]:
 
     normalized_text = "\n".join(normalized_lines)
     return normalized_text, last_return
-

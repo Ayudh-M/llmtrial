@@ -8,16 +8,18 @@ Files included:
 
 Usage (Snellius):
   module purge
-  module load 2024
-  module load Python/3.12.3-GCCcore-13.3.0
-  source ~/.venvs/consensus312/bin/activate
+  module load 2025
+  module spider Python
+  module load Python/3.11.6-GCCcore-13.3.0   # pick one listed by the spider command
+  source ~/.venvs/consensus/bin/activate
   mkdir -p runs logs
 
-  # Real HF run with Mistral-7B on both agents
-  sbatch run_gpu_hf.job "Explain cosmic rays to kids; return final text only."     rolesets/sql_author_auditor.json S1     mistralai/Mistral-7B-Instruct-v0.3 mistralai/Mistral-7B-Instruct-v0.3 bfloat16
+  # Real HF run with Mistral-7B on both agents using a registered scenario
+  sbatch run_gpu_hf.job mistral_math_smoke
 
   # Observe
   #  jid=$(sbatch ... | awk '{print $4}')
+  #  while [ ! -f logs/consensus-hf-$jid.out ]; do sleep 5; done
   #  tail -f logs/consensus-hf-$jid.out
 
   # After completion

@@ -1,64 +1,86 @@
 from __future__ import annotations
 
+"""Utility helpers shared across the project."""
+
+from dataclasses import dataclass
 import hashlib
 import json
 import re
 import unicodedata
-from dataclasses import dataclass
 from typing import Optional
+
+__all__ = [
+    "ALLOWED_PERFORMATIVES",
+    "ALLOWED_DSL_INTENTS",
+    "ACLParseResult",
+    "ACLParseError",
+    "parse_acl_message",
+    "parse_dsl_message",
+    "normalize_text",
+    "sha256_hex",
+    "to_json",
+]
 
 
 ALLOWED_PERFORMATIVES: tuple[str, ...] = (
+    "INFORM",
+    "REQUEST",
     "PROPOSE",
+    "QUERY",
     "CRITIQUE",
-    "QUESTION",
     "PLAN",
+    "CONFIRM",
+    "SOLVED",
+)
+
+ALLOWED_DSL_INTENTS: tuple[str, ...] = (
+    "DEFINE",
+    "PLAN",
+    "EXECUTE",
+    "REVISE",
+    "ASK",
+    "CONFIRM",
     "SOLVED",
 )
 
 
 @dataclass(frozen=True)
 class ACLParseResult:
+    """Parsed representation of a symbolic ACL statement."""
+
     intent: str
     content: str
     next_action: Optional[str] = None
 
 
 class ACLParseError(ValueError):
-    """Raised when an ACL message cannot be parsed into intent/content."""
+    """Raised when an ACL message is malformed."""
 
 
 _ACL_PATTERN = re.compile(r"^(?P<intent>[A-Za-z_]+)\s*:\s*(?P<body>.*)$")
 
 
 def parse_acl_message(text: str) -> ACLParseResult:
-    """Parse an ACL coordination message.
-
-    Messages must follow ``INTENT: text [=> next_action]``. The intent must be one of
-    :data:`ALLOWED_PERFORMATIVES`. When ``=>`` is present, the suffix is captured as the
-    ``next_action`` directive.
-    """
+    """Parse a symbolic agent communication (ACL) message."""
 
     if not isinstance(text, str):
-        raise ACLParseError("ACL message must be a string.")
+        raise ACLParseError("ACL message must be provided as a string.")
     stripped = text.strip()
     if not stripped:
         raise ACLParseError("ACL message cannot be empty.")
 
-    m = _ACL_PATTERN.match(stripped)
-    if not m:
-        raise ACLParseError(
-            "ACL message must start with 'INTENT: ...' where INTENT is uppercase."
-        )
+    match = _ACL_PATTERN.match(stripped)
+    if not match:
+        raise ACLParseError("ACL message must start with 'INTENT:'.")
 
-    intent = m.group("intent").strip().upper()
-    if intent not in ALLOWED_PERFORMATIVES:
+    intent_raw = match.group("intent").strip().upper()
+    if intent_raw not in ALLOWED_PERFORMATIVES:
         allowed = ", ".join(ALLOWED_PERFORMATIVES)
-        raise ACLParseError(f"Unknown intent '{intent}'. Allowed intents: {allowed}.")
+        raise ACLParseError(f"Unknown intent '{intent_raw}'. Allowed intents: {allowed}.")
 
-    body = m.group("body").strip()
+    body = match.group("body").strip()
     if not body:
-        raise ACLParseError("ACL message body cannot be empty.")
+        raise ACLParseError("ACL message content cannot be empty.")
 
     next_action: Optional[str] = None
     if "=>" in body:
@@ -71,40 +93,67 @@ def parse_acl_message(text: str) -> ACLParseResult:
     if not body:
         raise ACLParseError("ACL message content cannot be empty.")
 
-    return ACLParseResult(intent=intent, content=body, next_action=next_action)
+    return ACLParseResult(intent=intent_raw, content=body, next_action=next_action)
+
+
+_DSL_PATTERN = re.compile(
+    r"^(?P<intent>[A-Za-z_]+)\s*:\s*(?P<content>.+?)(?:\s*=>\s*(?P<next>[A-Za-z_]+))?\s*$"
+)
+
+
+def parse_dsl_message(text: str) -> dict[str, Optional[str]]:
+    """Validate and parse a DSL statement of the form ``INTENT: content => NEXT``."""
+
+    if not isinstance(text, str):
+        raise ValueError("DSL message must be provided as a string.")
+    stripped = text.strip()
+    if not stripped:
+        raise ValueError("DSL message cannot be empty.")
+
+    match = _DSL_PATTERN.match(stripped)
+    if not match:
+        raise ValueError("DSL message must match 'INTENT: content [=> NEXT]'.")
+
+    intent = match.group("intent").strip().upper()
+    if intent not in ALLOWED_DSL_INTENTS:
+        allowed = ", ".join(ALLOWED_DSL_INTENTS)
+        raise ValueError(f"Unknown DSL intent '{intent}'. Allowed intents: {allowed}.")
+
+    content = match.group("content").strip()
+    if not content:
+        raise ValueError("DSL content cannot be empty.")
+
+    next_action_raw = match.group("next")
+    result = {"intent": intent, "content": content}
+    if next_action_raw:
+        next_action = next_action_raw.strip().upper()
+        if next_action not in ALLOWED_DSL_INTENTS:
+            allowed = ", ".join(ALLOWED_DSL_INTENTS)
+            raise ValueError(
+                f"Unknown DSL next action '{next_action}'. Allowed intents: {allowed}."
+            )
+        result["next_action"] = next_action
+    else:
+        result["next_action"] = None
+    return result
 
 
 def normalize_text(text: str) -> str:
-    """Normalize text using NFKC, drop zero-width spaces, and collapse whitespace."""
+    """Normalize unicode text using NFKC and strip invisible characters."""
 
     if not isinstance(text, str):
         text = str(text)
     normalized = unicodedata.normalize("NFKC", text)
-    normalized = normalized.replace("\u200b", "")
-    collapsed = " ".join(normalized.split())
-    return collapsed
-
-import json, hashlib, unicodedata
-
-def to_json(obj) -> str:
-    return json.dumps(obj, ensure_ascii=False, indent=2)
+    return "".join(ch for ch in normalized if unicodedata.category(ch) != "Cf").strip()
 
 
-def sha256_hex(s: str) -> str:
-    return hashlib.sha256(s.encode("utf-8")).hexdigest()
+def sha256_hex(text: str) -> str:
+    """Return the SHA-256 hex digest for *text*."""
+
+    return hashlib.sha256(text.encode("utf-8")).hexdigest()
 
 
-def normalize_text(text: str) -> str:
-    if not isinstance(text, str):
-        text = str(text)
-    normalized = unicodedata.normalize("NFKC", text)
-    return "".join(ch for ch in normalized if unicodedata.category(ch) != "Cf")
-def normalize_text(text: str | None) -> str:
-    if text is None:
-        return ""
-    normalized = unicodedata.normalize("NFKC", text)
-    return "".join(ch for ch in normalized if unicodedata.category(ch) != "Cf")
-def normalize_text(text: str) -> str:
-    """Normalize text with NFKC and strip invisible format characters."""
-    normed = unicodedata.normalize("NFKC", text or "")
-    return "".join(ch for ch in normed if unicodedata.category(ch) != "Cf")
+def to_json(obj: object) -> str:
+    """Serialize *obj* into pretty-printed JSON."""
+
+    return json.dumps(obj, ensure_ascii=False, indent=2, sort_keys=True)
