@@ -1,6 +1,8 @@
 from __future__ import annotations
 
-from typing import Any, Dict, Mapping, Optional, Sequence, Tuple
+from typing import Any, Dict, List, Mapping, Optional, Sequence, Tuple
+
+from jinja2 import TemplateError
 
 import torch
 from transformers import (
@@ -73,6 +75,47 @@ def _has_chat_template(tokenizer: PreTrainedTokenizer) -> bool:
     return bool(getattr(tokenizer, "chat_template", None))
 
 
+def _merge_system_messages(messages: Sequence[Mapping[str, Any]]) -> List[Dict[str, str]]:
+    """Merge leading system messages into the first non-system message.
+
+    Some chat templates (e.g. Mistral) reject consecutive system messages or
+    conversations that do not strictly alternate `user`/`assistant` roles. When
+    that happens we fold system instructions into the first user turn so that
+    the rendered conversation satisfies the template requirements.
+    """
+
+    merged: List[Dict[str, str]] = []
+    system_chunks: List[str] = []
+
+    for message in messages:
+        role = str(message.get("role", ""))
+        content = str(message.get("content", ""))
+        if role.lower() == "system":
+            if content:
+                system_chunks.append(content)
+            continue
+
+        if system_chunks:
+            prefix = "\n\n".join(chunk for chunk in system_chunks if chunk)
+            if prefix:
+                content = f"{prefix}\n\n{content}" if content else prefix
+            system_chunks.clear()
+
+        merged.append({"role": role or "user", "content": content})
+
+    if system_chunks:
+        prefix = "\n\n".join(chunk for chunk in system_chunks if chunk)
+        if merged:
+            first = dict(merged[0])
+            existing = first.get("content", "")
+            first["content"] = f"{prefix}\n\n{existing}" if existing else prefix
+            merged[0] = first
+        elif prefix:
+            merged.append({"role": "user", "content": prefix})
+
+    return merged
+
+
 def build_inputs(
     tokenizer: PreTrainedTokenizer,
     messages_or_text: Sequence[Dict[str, str]] | str,
@@ -84,11 +127,33 @@ def build_inputs(
     if _has_chat_template(tokenizer):
         if not isinstance(messages_or_text, Sequence) or not messages_or_text:
             raise TypeError("Chat templates require a list of messages.")
-        return tokenizer.apply_chat_template(
-            list(messages_or_text),
-            return_tensors="pt",
-            add_generation_prompt=add_generation_prompt,
-        )
+
+        prepared = [
+            {
+                "role": str(message.get("role", "")),
+                "content": str(message.get("content", "")),
+            }
+            for message in messages_or_text  # type: ignore[arg-type]
+        ]
+
+        candidates = [prepared]
+        merged = _merge_system_messages(prepared)
+        if merged and merged != prepared:
+            candidates.append(merged)
+
+        last_attempt = prepared
+        for convo in candidates:
+            try:
+                return tokenizer.apply_chat_template(
+                    convo,
+                    return_tensors="pt",
+                    add_generation_prompt=add_generation_prompt,
+                )
+            except (TemplateError, ValueError, TypeError):
+                last_attempt = convo
+                continue
+
+        messages_or_text = last_attempt  # fall back to plain formatting
 
     if isinstance(messages_or_text, Sequence) and messages_or_text and isinstance(messages_or_text[0], dict):
         lines = []
