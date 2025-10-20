@@ -22,12 +22,8 @@ ssh your_username@snellius.surf.nl
 # Cancel any queued/running jobs under your user
 squeue -u "$USER" | awk 'NR>1{print $1}' | xargs -r scancel
 
-# Work inside a dedicated workspace so other repos in ~/projects stay untouched
-export LLMTRIAL_WORKDIR="$HOME/projects/llmtrial_ws"
-mkdir -p "$LLMTRIAL_WORKDIR"
-
-# Remove only the llmtrial checkout inside the workspace plus the shared caches
-rm -rf "$LLMTRIAL_WORKDIR/llmtrial" ~/.venvs/consensus ~/.cache/huggingface ~/.cache/hf
+# Remove previous checkout, venv, and HF caches (user-space only)
+rm -rf ~/projects/llmtrial ~/.venvs/consensus ~/.cache/huggingface ~/.cache/hf
 ```
 
 ---
@@ -36,9 +32,7 @@ rm -rf "$LLMTRIAL_WORKDIR/llmtrial" ~/.venvs/consensus ~/.cache/huggingface ~/.c
 
 ```bash
 REPO_URL="https://github.com/Ayudh-M/llmtrial.git"   # change if needed
-export LLMTRIAL_WORKDIR="${LLMTRIAL_WORKDIR:-$HOME/projects/llmtrial_ws}"
-mkdir -p "$LLMTRIAL_WORKDIR"
-cd "$LLMTRIAL_WORKDIR"
+mkdir -p ~/projects && cd ~/projects
 git clone "$REPO_URL" llmtrial
 cd llmtrial
 git remote -v
@@ -53,9 +47,7 @@ module purge
 module load 2025
 # List available Python builds in the 2025 stack and pick one that exists.
 module spider Python
-# The spider output lists the required toolchain modules.  For example, if it
-# shows `Python/3.11.6-GCCcore-13.3.0`, load the GCCcore dependency first:
-module load GCCcore/13.3.0
+# Example (adjust to one listed by the spider command):
 module load Python/3.11.6-GCCcore-13.3.0
 
 python -m venv ~/.venvs/consensus
@@ -159,8 +151,7 @@ If you want to fully reset and reclone later:
 
 ```bash
 squeue -u "$USER" | awk 'NR>1{print $1}' | xargs -r scancel
-export LLMTRIAL_WORKDIR="${LLMTRIAL_WORKDIR:-$HOME/projects/llmtrial_ws}"
-rm -rf "$LLMTRIAL_WORKDIR/llmtrial" ~/.venvs/consensus ~/.cache/huggingface ~/.cache/hf
+rm -rf ~/projects/llmtrial ~/.venvs/consensus ~/.cache/huggingface ~/.cache/hf
 # then repeat from Section 2
 ```
 

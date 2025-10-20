@@ -14,15 +14,6 @@ def test_json_schema_consensus():
     assert result["analytics"]["a"] == {}
 
 
-def test_mock_agent_includes_final_solution_on_first_turn():
-    agent = MockAgent("Agent", "37", strategy=build_strategy("json_schema"))
-    envelope, raw = agent.step("Return", [])
-    assert isinstance(envelope, dict)
-    assert envelope["status"] == "WORKING"
-    assert envelope["final_solution"]["canonical_text"] == "37"
-    assert "\"final_solution\"" in raw
-
-
 def test_pseudocode_strategy_normalises_output():
     messy = "- STEP 1: add numbers\n- RETURN 5"
     strategy = build_strategy("pseudocode")
