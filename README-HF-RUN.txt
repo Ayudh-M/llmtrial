@@ -13,8 +13,8 @@ Usage (Snellius):
   source ~/.venvs/consensus312/bin/activate
   mkdir -p runs logs
 
-  # Real HF run with Mistral-7B on both agents
-  sbatch run_gpu_hf.job "Explain cosmic rays to kids; return final text only."     rolesets/sql_author_auditor.json S1     mistralai/Mistral-7B-Instruct-v0.3 mistralai/Mistral-7B-Instruct-v0.3 bfloat16
+  # Real HF run with Mistral-7B on both agents using a registered scenario
+  sbatch run_gpu_hf.job mistral_math_smoke
 
   # Observe
   #  jid=$(sbatch ... | awk '{print $4}')
