@@ -35,17 +35,42 @@ def build_strategy(
     elif isinstance(cfg, str):
         definition = get_strategy_definition(cfg)
     elif isinstance(cfg, Mapping):
-        strategy_id = (
-            cfg.get("id")
-            or cfg.get("name")
-            or cfg.get("strategy")
-        )
-        if not strategy_id:
-            raise ValueError("Strategy configuration requires an 'id'.")
-        definition = get_strategy_definition(str(strategy_id))
-        overrides = {
-            k: v for k, v in dict(cfg).items() if k not in {"id", "name", "strategy"}
-        }
+        raw = dict(cfg)
+        strategy_id = raw.get("id") or raw.get("name") or raw.get("strategy")
+        if strategy_id and strategy_id in STRATEGY_REGISTRY:
+            definition = get_strategy_definition(str(strategy_id))
+            overrides = {k: v for k, v in raw.items() if k not in {"id", "name", "strategy"}}
+            if "validator" in overrides and "validator_id" not in overrides:
+                overrides["validator_id"] = overrides.pop("validator")
+            if "prompt_snippet" in overrides:
+                meta = dict(definition.metadata)
+                if "metadata" in overrides and isinstance(overrides["metadata"], Mapping):
+                    meta.update(dict(overrides["metadata"]))
+                meta["prompt_snippet"] = overrides.pop("prompt_snippet")
+                overrides["metadata"] = meta
+        else:
+            data = dict(raw)
+            if strategy_id:
+                data.setdefault("id", str(strategy_id))
+                data.setdefault("name", str(strategy_id))
+            else:
+                data.setdefault("id", "custom")
+                data.setdefault("name", "custom")
+            decoding = data.get("decoding")
+            if decoding is not None:
+                data["decoding"] = dict(decoding)
+            metadata = data.get("metadata") or {}
+            data["metadata"] = dict(metadata)
+            validator_params = data.get("validator_params")
+            if validator_params is not None:
+                data["validator_params"] = dict(validator_params)
+            if "validator" in data and "validator_id" not in data:
+                data["validator_id"] = data.pop("validator")
+            prompt_snippet = data.pop("prompt_snippet", None)
+            if prompt_snippet is not None:
+                data.setdefault("metadata", {})
+                data["metadata"].setdefault("prompt_snippet", prompt_snippet)
+            return Strategy(**data)
     else:
         raise TypeError(
             "Strategy configuration must be a strategy id, definition, mapping, or Strategy instance."

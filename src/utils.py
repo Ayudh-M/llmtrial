@@ -28,43 +28,43 @@ class ACLParseError(ValueError):
     """Raised when an ACL message cannot be parsed into intent/content."""
 
 
-_ACL_PATTERN = re.compile(r"^(?P<intent>[A-Za-z_]+)\s*:\s*(?P<body>.*)$")
+_ACL_PATTERN = re.compile(r"^(?P<intent>[A-Za-z_]+)\s*:\s*(?P<body>.*)$", re.DOTALL)
 
 
 def parse_acl_message(text: str) -> ACLParseResult:
-    """Parse an ACL coordination message.
+    """Parse a light-weight ACL style coordination message.
 
-    Messages must follow ``INTENT: text [=> next_action]``. The intent must be one of
-    :data:`ALLOWED_PERFORMATIVES`. When ``=>`` is present, the suffix is captured as the
-    ``next_action`` directive.
+    The expected structure is ``INTENT: description [=> next_action]`` where ``INTENT`` must
+    belong to :data:`ALLOWED_PERFORMATIVES`.
     """
 
     if not isinstance(text, str):
         raise ACLParseError("ACL message must be a string.")
+
     stripped = text.strip()
     if not stripped:
         raise ACLParseError("ACL message cannot be empty.")
 
-    m = _ACL_PATTERN.match(stripped)
-    if not m:
+    match = _ACL_PATTERN.match(stripped)
+    if not match:
         raise ACLParseError(
             "ACL message must start with 'INTENT: ...' where INTENT is uppercase."
         )
 
-    intent = m.group("intent").strip().upper()
+    intent = match.group("intent").strip().upper()
     if intent not in ALLOWED_PERFORMATIVES:
         allowed = ", ".join(ALLOWED_PERFORMATIVES)
         raise ACLParseError(f"Unknown intent '{intent}'. Allowed intents: {allowed}.")
 
-    body = m.group("body").strip()
+    body = match.group("body").strip()
     if not body:
         raise ACLParseError("ACL message body cannot be empty.")
 
     next_action: Optional[str] = None
     if "=>" in body:
-        before, after = body.split("=>", 1)
-        body = before.strip()
-        next_action = after.strip()
+        prefix, suffix = body.split("=>", 1)
+        body = prefix.strip()
+        next_action = suffix.strip()
         if not next_action:
             raise ACLParseError("Next action after '=>' cannot be empty.")
 
@@ -74,37 +74,27 @@ def parse_acl_message(text: str) -> ACLParseResult:
     return ACLParseResult(intent=intent, content=body, next_action=next_action)
 
 
-def normalize_text(text: str) -> str:
-    """Normalize text using NFKC, drop zero-width spaces, and collapse whitespace."""
+def sha256_hex(text: str) -> str:
+    return hashlib.sha256(text.encode("utf-8")).hexdigest()
 
-    if not isinstance(text, str):
-        text = str(text)
-    normalized = unicodedata.normalize("NFKC", text)
-    normalized = normalized.replace("\u200b", "")
-    collapsed = " ".join(normalized.split())
-    return collapsed
 
-import json, hashlib, unicodedata
-
-def to_json(obj) -> str:
+def to_json(obj: object) -> str:
     return json.dumps(obj, ensure_ascii=False, indent=2)
 
 
-def sha256_hex(s: str) -> str:
-    return hashlib.sha256(s.encode("utf-8")).hexdigest()
-
-
-def normalize_text(text: str) -> str:
-    if not isinstance(text, str):
-        text = str(text)
-    normalized = unicodedata.normalize("NFKC", text)
-    return "".join(ch for ch in normalized if unicodedata.category(ch) != "Cf")
 def normalize_text(text: str | None) -> str:
     if text is None:
         return ""
-    normalized = unicodedata.normalize("NFKC", text)
-    return "".join(ch for ch in normalized if unicodedata.category(ch) != "Cf")
-def normalize_text(text: str) -> str:
-    """Normalize text with NFKC and strip invisible format characters."""
-    normed = unicodedata.normalize("NFKC", text or "")
-    return "".join(ch for ch in normed if unicodedata.category(ch) != "Cf")
+    normalised = unicodedata.normalize("NFKC", text)
+    return "".join(ch for ch in normalised if unicodedata.category(ch) != "Cf")
+
+
+__all__ = [
+    "ACLParseError",
+    "ACLParseResult",
+    "ALLOWED_PERFORMATIVES",
+    "normalize_text",
+    "parse_acl_message",
+    "sha256_hex",
+    "to_json",
+]

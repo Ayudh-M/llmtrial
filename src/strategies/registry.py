@@ -19,8 +19,6 @@ class AgentProfile:
     max_new_tokens: int = 256
 
     def clone(self) -> "AgentProfile":
-        """Return a shallow copy that can be mutated by callers without affecting the registry."""
-
         return replace(self)
 
 
@@ -28,8 +26,8 @@ class AgentProfile:
 class Strategy:
     """Runtime strategy object surfaced to controllers and agents."""
 
-    id: str
-    name: str
+    id: str = "custom"
+    name: str = "custom"
     description: str = ""
     json_only: bool = True
     allow_cot: bool = False
@@ -42,6 +40,71 @@ class Strategy:
     controller_behaviors: Tuple[ControllerBehavior, ...] = field(default_factory=tuple)
     agent_profile: AgentProfile = field(default_factory=AgentProfile)
     metadata: Dict[str, Any] = field(default_factory=dict)
+    envelope_required: bool = True
+    validator_id: Optional[str] = None
+    validator_params: Dict[str, Any] = field(default_factory=dict)
+
+    # --- lifecycle hooks -----------------------------------------------------
+    def prepare_prompt(
+        self,
+        task: str,
+        transcript: List[Dict[str, Any]],
+        *,
+        actor: str,
+        agent_name: str,
+    ) -> Dict[str, Any]:
+        return {}
+
+    def validate_message(
+        self,
+        envelope: Any,
+        *,
+        raw: Any,
+        original: Any,
+        transcript: List[Dict[str, Any]],
+        actor: str,
+        agent_name: str,
+    ) -> Dict[str, Any]:
+        ok = True
+        errors: List[str] = []
+        mapping: Optional[Mapping[str, Any]]
+        if hasattr(envelope, "model_dump"):
+            mapping = envelope.model_dump()
+        elif isinstance(envelope, Mapping):
+            mapping = envelope
+        else:
+            mapping = None
+
+        if mapping is not None:
+            for validator in self.envelope_validators:
+                valid, message = validator(mapping)
+                ok = ok and valid
+                if message:
+                    errors.append(message)
+        return {"ok": ok, "errors": errors}
+
+    def postprocess(
+        self,
+        envelope: Any,
+        *,
+        raw: Any,
+        validation: Mapping[str, Any],
+        transcript: List[Dict[str, Any]],
+        actor: str,
+        agent_name: str,
+    ) -> Tuple[Any, Dict[str, Any]]:
+        return envelope, {}
+
+    def should_stop(
+        self,
+        envelope: Any,
+        *,
+        validation: Mapping[str, Any],
+        transcript: List[Dict[str, Any]],
+        actor: str,
+        agent_name: str,
+    ) -> Tuple[bool, Optional[str]]:
+        return False, None
 
     def apply_pre_round_hooks(self, controller_state: MutableMapping[str, Any]) -> None:
         for hook in self.pre_round_hooks:
@@ -53,11 +116,13 @@ class Strategy:
 
     def validate_envelope(self, envelope: Mapping[str, Any]) -> Tuple[bool, List[str]]:
         errors: List[str] = []
+        ok = True
         for validator in self.envelope_validators:
             valid, message = validator(envelope)
-            if not valid:
-                errors.append(message or "Envelope validation failed.")
-        return len(errors) == 0, errors
+            ok = ok and valid
+            if not valid and message:
+                errors.append(message)
+        return ok, errors
 
     def decorate_prompts(self, prompt: str, context: Optional[Mapping[str, Any]] = None) -> str:
         ctx = context or {}
@@ -68,8 +133,6 @@ class Strategy:
 
     @property
     def agent_defaults(self) -> AgentProfile:
-        """Expose a copy of the agent profile defaults for consumer modules."""
-
         return self.agent_profile.clone()
 
 
@@ -83,11 +146,13 @@ class StrategyDefinition:
     json_only: bool = True
     allow_cot: bool = False
     max_rounds: int = 8
-    decoding: Mapping[str, Any] = field(default_factory=lambda: {
-        "do_sample": False,
-        "temperature": 0.0,
-        "max_new_tokens": 256,
-    })
+    decoding: Mapping[str, Any] = field(
+        default_factory=lambda: {
+            "do_sample": False,
+            "temperature": 0.0,
+            "max_new_tokens": 256,
+        }
+    )
     consensus_mode: str = "review_handshake"
     pre_round_hooks: Tuple[PreRoundHook, ...] = field(default_factory=tuple)
     envelope_validators: Tuple[EnvelopeValidator, ...] = field(default_factory=tuple)
@@ -95,12 +160,14 @@ class StrategyDefinition:
     controller_behaviors: Tuple[ControllerBehavior, ...] = field(default_factory=tuple)
     agent_profile: AgentProfile = field(default_factory=AgentProfile)
     metadata: Mapping[str, Any] = field(default_factory=dict)
+    envelope_required: bool = True
+    validator_id: Optional[str] = None
+    validator_params: Mapping[str, Any] = field(default_factory=dict)
 
     def instantiate(self, **overrides: Any) -> Strategy:
         data = {f.name: getattr(self, f.name) for f in fields(self)}
         data.update(overrides)
 
-        # Ensure mapping values are copied so mutations do not affect the registry.
         decoding = data.get("decoding") or {}
         data["decoding"] = copy.deepcopy(dict(decoding))
 
@@ -110,6 +177,9 @@ class StrategyDefinition:
         agent_profile = data.get("agent_profile")
         if isinstance(agent_profile, AgentProfile):
             data["agent_profile"] = agent_profile.clone()
+
+        validator_params = data.get("validator_params") or {}
+        data["validator_params"] = dict(validator_params)
 
         def _tupled(value: Any) -> Tuple[Any, ...]:
             if not value:
@@ -143,6 +213,8 @@ def _decorate_with_json_hint(prompt: str, context: Mapping[str, Any]) -> str:
     if context.get("json_hint_applied"):
         return prompt
     suffix = "\n\nRemember to answer with a single valid JSON object."
+    context = dict(context)
+    context["json_hint_applied"] = True
     return prompt + suffix
 
 
@@ -387,3 +459,16 @@ register_strategy(
         },
     )
 )
+
+
+__all__ = [
+    "AgentProfile",
+    "ControllerBehavior",
+    "EnvelopeValidator",
+    "PreRoundHook",
+    "PromptDecorator",
+    "Strategy",
+    "StrategyDefinition",
+    "STRATEGY_REGISTRY",
+    "register_strategy",
+]
