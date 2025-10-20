@@ -6,7 +6,6 @@
     "status",
     "tag"
   ],
-  "required": ["status", "tag", "final_solution"],
   "properties": {
     "status": {
       "type": "string",
@@ -21,7 +20,7 @@
     },
     "tag": {
       "type": "string",
-      "pattern": "^\\[(CONTACT|SOLVED)\\]$"
+      "pattern": "^\\[[A-Z0-9_:-]+\\]$"
     },
     "content": {
       "type": [
