@@ -42,6 +42,9 @@ def load_model_and_tokenizer(
 
     tokenizer_ref = tokenizer_id or repo_id
     tokenizer = AutoTokenizer.from_pretrained(tokenizer_ref)
+    if tokenizer.pad_token_id is None and tokenizer.eos_token_id is not None:
+        tokenizer.pad_token = tokenizer.eos_token
+        tokenizer.pad_token_id = tokenizer.eos_token_id
 
     model_kwargs: Dict[str, Any] = {"device_map": "auto"}
     target_dtype = _resolve_dtype(dtype)
@@ -58,6 +61,10 @@ def load_model_and_tokenizer(
         model_kwargs.update(load_in_8bit=True)
 
     model = AutoModelForCausalLM.from_pretrained(repo_id, **model_kwargs)
+    if getattr(model.config, "pad_token_id", None) is None and tokenizer.pad_token_id is not None:
+        model.config.pad_token_id = tokenizer.pad_token_id
+    if hasattr(model, "generation_config") and tokenizer.pad_token_id is not None:
+        model.generation_config.pad_token_id = tokenizer.pad_token_id
     model.eval()
     return tokenizer, model
 
@@ -116,18 +123,27 @@ def _generate(
         do_sample = bool(temperature and float(temperature) > 0.0)
 
     input_ids = build_inputs(tokenizer, messages, add_generation_prompt=True).to(model.device)
+    attention_mask = torch.ones_like(input_ids)
     gen_kwargs: Dict[str, Any] = {
         "max_new_tokens": int(max_new_tokens or 256),
-        "temperature": float(temperature or 0.0),
         "do_sample": bool(do_sample),
     }
+    if do_sample:
+        gen_kwargs["temperature"] = float(temperature or 0.0)
     if top_p is not None:
         gen_kwargs["top_p"] = float(top_p)
     if top_k is not None:
         gen_kwargs["top_k"] = int(top_k)
     gen_kwargs.update(extra)
 
-    output = model.generate(input_ids=input_ids, **gen_kwargs)
+    if tokenizer.pad_token_id is not None:
+        gen_kwargs.setdefault("pad_token_id", tokenizer.pad_token_id)
+
+    output = model.generate(
+        input_ids=input_ids,
+        attention_mask=attention_mask,
+        **gen_kwargs,
+    )
     return tokenizer.decode(output[0], skip_special_tokens=True)
 
 
