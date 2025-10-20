@@ -19,5 +19,7 @@ export TRANSFORMERS_CACHE=$HF_HOME/transformers
 export HF_DATASETS_CACHE=$HF_HOME/datasets
 mkdir -p "$HF_HOME" logs runs
 
-echo "Scenario: ${1:-mistral_truth}"
-srun python -m src.main --scenario "${1:-mistral_truth}" --dtype bfloat16
+SCENARIO="${1:-mistral_math_smoke}"
+
+echo "Scenario: ${SCENARIO}"
+srun python -m src.main --scenario "${SCENARIO}" --preset mistral --dtype bfloat16

@@ -2,7 +2,7 @@ scenarios:
   mistral_math_smoke:
     task: Compute 3+1 and return only the number.
     roleset: rolesets/math_solver_checker.json
-    strategy: S1
+    strategy: json_schema
     model_a: mistralai/Mistral-7B-Instruct-v0.3
     model_b: mistralai/Mistral-7B-Instruct-v0.3
     dtype: bf16
@@ -14,7 +14,7 @@ scenarios:
   regex_email_basic:
     task: "Write a regex that matches valid example.com emails and rejects others."
     roleset: rolesets/regex_author_tester.json
-    strategy: S1
+    strategy: json_schema
     model_a: mistralai/Mistral-7B-Instruct-v0.3
     model_b: mistralai/Mistral-7B-Instruct-v0.3
     kind: regex
@@ -23,7 +23,7 @@ scenarios:
   sql_sales_sum:
     task: "Given table orders(id, customer_id, amount, created_at), return total amount per customer for 2024."
     roleset: rolesets/sql_author_auditor.json
-    strategy: S1
+    strategy: json_schema
     model_a: mistralai/Mistral-7B-Instruct-v0.3
     model_b: mistralai/Mistral-7B-Instruct-v0.3
     kind: sql
