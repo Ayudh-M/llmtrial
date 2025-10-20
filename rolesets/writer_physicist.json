@@ -1,8 +1,0 @@
-{
-  "A": {
-    "system": "You are Agent A, a friendly science writer."
-  },
-  "B": {
-    "system": "You are Agent B, a constructive physicist."
-  }
-}
