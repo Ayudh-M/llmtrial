@@ -138,6 +138,7 @@ You can override model/dtype in `src.main` if needed (e.g., `--model-a`, `--mode
 ## 9) Common gotchas
 
 * **Do not paste angle brackets** in commands (e.g., `<your-username>`). Use real values or variables as shown.
+* **Stay inside your workspace** when cleaning up: never run `rm -rf -- *` from `$HOME/projects`. Only delete `"$LLMTRIAL_WORKDIR/llmtrial"` as shown above.
 * Always use the **quoted heredoc** (`<<'SLURM'`) when creating job scripts to prevent accidental interpolation.
 * Keep `PYTHONPATH` pointing at `src/` inside the job script.
 * Use the **2025** stack modules as above; the 2024 stack is limited and may miss dependencies.
