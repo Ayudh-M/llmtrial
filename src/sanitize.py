@@ -1,8 +1,32 @@
 from __future__ import annotations
 
-from typing import Any, Dict
+import re
+from typing import Any, Dict, Optional
 
-ALLOWED_TAGS = {"[CONTACT]", "[SOLVED]"}
+TAG_PATTERN = re.compile(r"\[[A-Z0-9_:-]+\]")
+
+NON_SOLVED_FINALS = {
+    "PLAN_READY",
+    "PLAN_NEEDS_WORK",
+    "READY_FOR_TESTS",
+    "NEEDS_REVISION",
+    "READY",
+    "BLOCKED",
+    "REVISION_DONE",
+    "REVISE",
+    "APPROVED",
+    "ALLOW",
+    "DENY",
+    "ESCALATE",
+    "UNSURE",
+    "SUMMARY_WITH_CITATIONS",
+    "NEEDS_MORE",
+    "DRAFT_B_V1",
+    "JOINT_FINAL",
+    "A",
+    "B",
+    "TIE",
+}
 ALLOWED_STATUS = {
     "WORKING",
     "NEED_PEER",
@@ -11,6 +35,19 @@ ALLOWED_STATUS = {
     "REVISED",
     "SOLVED",
 }
+
+
+def _tag_hint(raw_tag: str) -> Optional[bool]:
+    """Return True if the tag hints at SOLVED, False if CONTACT, else None."""
+
+    tag = raw_tag.strip().upper()
+    if not tag.startswith("["):
+        return None
+    if tag.startswith("[SOLVED"):
+        return True
+    if tag.startswith("[CONTACT"):
+        return False
+    return None
 
 
 def repair_envelope(env: Dict[str, Any]) -> Dict[str, Any]:
@@ -23,31 +60,58 @@ def repair_envelope(env: Dict[str, Any]) -> Dict[str, Any]:
 
     fixed = dict(env) if isinstance(env, dict) else {}
 
-    tag = str(fixed.get("tag", "")).strip().upper()
+    raw_tag = str(fixed.get("tag", ""))
     status = str(fixed.get("status", "")).strip().upper()
     final_solution = fixed.get("final_solution")
-    has_final = isinstance(final_solution, dict) and bool(
-        str(final_solution.get("canonical_text", "")).strip()
+    canonical_text = ""
+    if isinstance(final_solution, dict):
+        raw_value = final_solution.get("canonical_text", "")
+        canonical_text = str(raw_value) if raw_value is not None else ""
+
+    normalised_tag = raw_tag.strip().upper()
+    final_hint = _tag_hint(raw_tag)
+    canonical_trimmed = canonical_text.strip()
+    canonical_upper = canonical_trimmed.upper() if canonical_trimmed else ""
+    stage_like = canonical_upper in NON_SOLVED_FINALS
+
+    should_mark_solved = bool(
+        final_hint is True and not stage_like
     )
 
-    if tag not in ALLOWED_TAGS:
-        fixed["tag"] = "[SOLVED]" if has_final else "[CONTACT]"
-    else:
-        fixed["tag"] = tag
+    tag_matches_pattern = bool(TAG_PATTERN.fullmatch(normalised_tag))
 
-    if status not in ALLOWED_STATUS:
-        fixed["status"] = "SOLVED" if fixed["tag"] == "[SOLVED]" else "PROPOSED"
+    if should_mark_solved:
+        target_tag = "[SOLVED]"
+    elif final_hint is True and stage_like:
+        target_tag = "[CONTACT]"
+    elif tag_matches_pattern:
+        target_tag = normalised_tag
     else:
+        target_tag = "[SOLVED]" if canonical_text and not stage_like else "[CONTACT]"
+    fixed["tag"] = target_tag
+
+    downgraded_from_solved = final_hint is True and target_tag != "[SOLVED]"
+
+    if target_tag == "[SOLVED]":
+        fixed["status"] = "SOLVED"
+    elif downgraded_from_solved:
+        fixed["status"] = "PROPOSED"
+    elif status in ALLOWED_STATUS:
         fixed["status"] = status
+    else:
+        fixed["status"] = "PROPOSED"
 
-    if fixed["tag"] != "[SOLVED]":
+    if isinstance(final_solution, dict) and canonical_trimmed:
+        fixed["final_solution"] = {"canonical_text": canonical_trimmed}
+    else:
         fixed.pop("final_solution", None)
-    elif has_final:
-        fixed["final_solution"] = {
-            "canonical_text": str(final_solution.get("canonical_text", "")).strip(),
-        }
 
     return fixed
 
 
-__all__ = ["repair_envelope", "ALLOWED_TAGS", "ALLOWED_STATUS"]
+__all__ = [
+    "repair_envelope",
+    "ALLOWED_STATUS",
+    "TAG_PATTERN",
+    "NON_SOLVED_FINALS",
+]

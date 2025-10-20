@@ -7,7 +7,8 @@ import time
 from pathlib import Path
 from typing import Any, Dict, List, Mapping, Optional, Sequence, Tuple
 
-try:  # Package-relative imports when executed as `python -m src.main`
+if __package__:
+    # Package-relative imports when executed as ``python -m src.main``.
     from .agents_hf import HFChatAgent
     from .agents_mock import MockAgent
     from .controller import run_controller
@@ -17,7 +18,7 @@ try:  # Package-relative imports when executed as `python -m src.main`
     from .schemas import get_envelope_validator
     from .strategies import Strategy, build_strategy, list_strategy_ids
     from .template_loader import get_scenario, load_roleset
-except ImportError:  # pragma: no cover - fallback for direct execution
+else:  # pragma: no cover - fallback for direct execution
     from agents_hf import HFChatAgent  # type: ignore
     from agents_mock import MockAgent  # type: ignore
     from controller import run_controller  # type: ignore
