@@ -213,12 +213,6 @@ class HFChatAgent:
         preparation: Optional[Dict[str, Any]] = None,
     ) -> Tuple[Dict[str, Any], str]:
         base_messages = self._messages(task, transcript, preparation)
-        if len(base_messages) < 2:
-            raise ValueError("Expected at least system and user messages for generation.")
-
-        system_message = dict(base_messages[0])
-        user_message = dict(base_messages[1])
-        base_user_content = user_message.get("content", "")
         decoding: Dict[str, Any] = dict(self.strategy.decoding or {})
         if preparation and preparation.get("decoding_override"):
             decoding.update(preparation["decoding_override"])  # type: ignore[arg-type]
@@ -228,21 +222,9 @@ class HFChatAgent:
         raw_output = ""
 
         for attempt in range(max_attempts):
+            convo: List[Dict[str, str]] = list(base_messages)
             if attempt and errors:
-                retry_content = base_user_content
-                if retry_content:
-                    retry_content = f"{retry_content}\n\n{_retry_instructions(errors)}"
-                else:
-                    retry_content = _retry_instructions(errors)
-                convo = [
-                    dict(system_message),
-                    {
-                        "role": "user",
-                        "content": retry_content,
-                    },
-                ]
-            else:
-                convo = [dict(system_message), dict(user_message)]
+                convo.append({"role": "user", "content": _retry_instructions(errors)})
 
             raw_output = generate_json_only(
                 self.tokenizer,
