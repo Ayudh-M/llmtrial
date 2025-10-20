@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import json
-from typing import Any, Dict, List, Mapping, Optional, Tuple
+from typing import Any, Dict, List, Mapping, Optional, Sequence, Tuple
 
 from .control_trailer import (
     CONTROL_TRAILER_GUIDE,
@@ -11,8 +11,9 @@ from .control_trailer import (
 )
 from .model_loader import generate_json_only
 from .pseudocode import augment_system_prompt
+from .sanitize import ALLOWED_STATUS, repair_envelope
 from .strategies import Strategy
-from .utils import ALLOWED_PERFORMATIVES
+from .utils import ALLOWED_PERFORMATIVES, ACLParseError, parse_acl_message
 
 
 _PERFORMATIVE_LIST = ", ".join(ALLOWED_PERFORMATIVES)
@@ -27,13 +28,98 @@ TRAILER_REMINDER = (
 )
 
 
-def _retry_instructions(errors: List[str]) -> str:
+def _iter_json_objects(text: str) -> List[str]:
+    results: List[str] = []
+    if not isinstance(text, str):
+        return results
+
+    depth = 0
+    start: Optional[int] = None
+    in_string = False
+    escape = False
+
+    for index, char in enumerate(text):
+        if in_string:
+            if escape:
+                escape = False
+            elif char == "\\":
+                escape = True
+            elif char == '"':
+                in_string = False
+            continue
+
+        if char == '"':
+            in_string = True
+            continue
+
+        if char == '{':
+            if depth == 0:
+                start = index
+            depth += 1
+        elif char == '}':
+            if depth:
+                depth -= 1
+                if depth == 0 and start is not None:
+                    results.append(text[start : index + 1])
+                    start = None
+
+    return results
+
+
+def _extract_last_json(text: str) -> Optional[str]:
+    blocks = _iter_json_objects(text)
+    if not blocks:
+        return None
+    return blocks[-1]
+
+
+def _validate_envelope_candidate(candidate: Any) -> List[str]:
+    if not isinstance(candidate, Mapping):
+        return ["Response must be a JSON object with the expected fields."]
+
+    errors: List[str] = []
+
+    tag = candidate.get("tag")
+    if not isinstance(tag, str) or not tag.strip():
+        errors.append("Missing or empty 'tag' field.")
+
+    status = candidate.get("status")
+    if not isinstance(status, str) or status.strip().upper() not in ALLOWED_STATUS:
+        allowed = ", ".join(sorted(ALLOWED_STATUS))
+        errors.append(f"Invalid 'status'. Expected one of: {allowed}.")
+
+    content = candidate.get("content")
+    if not isinstance(content, Mapping):
+        errors.append("'content' must be an object containing an 'acl' field.")
+    else:
+        acl = content.get("acl")
+        if not isinstance(acl, str) or not acl.strip():
+            errors.append("'content.acl' must be a non-empty string following 'INTENT: message => next_action'.")
+        else:
+            try:
+                parse_acl_message(acl)
+            except ACLParseError as exc:
+                errors.append(f"Invalid ACL message: {exc}")
+
+    if "final_solution" in candidate and candidate.get("final_solution") is not None:
+        final_solution = candidate.get("final_solution")
+        if not isinstance(final_solution, Mapping):
+            errors.append("'final_solution' must be an object when provided.")
+        else:
+            canonical_text = final_solution.get("canonical_text")
+            if not isinstance(canonical_text, str) or not canonical_text.strip():
+                errors.append("'final_solution.canonical_text' must be a non-empty string when final_solution is supplied.")
+
+    return errors
+
+
+def _retry_instructions(errors: Sequence[str]) -> str:
     bullet_list = "\n".join(f"- {msg}" for msg in errors if msg)
     details = f"\n{bullet_list}" if bullet_list else ""
     return (
-        "Your previous reply did not include a valid control trailer."
+        "Your previous reply was not a valid JSON envelope the coordinator could parse."
         f"{details}\n"
-        "Rewrite your message (body as needed) and finish with <<<CTRL{{...}}CTRL>>> including tag, status, intent, and any required final_solution.canonical_text."
+        "Return a single JSON object with tag, status, content.acl, and (if applicable) final_solution.canonical_text matching the schema."
     )
 
 
@@ -135,12 +221,6 @@ class HFChatAgent:
         preparation: Optional[Dict[str, Any]] = None,
     ) -> Tuple[Dict[str, Any], str]:
         base_messages = self._messages(task, transcript, preparation)
-        if len(base_messages) < 2:
-            raise ValueError("Expected at least system and user messages for generation.")
-
-        system_message = dict(base_messages[0])
-        user_message = dict(base_messages[1])
-        base_user_content = user_message.get("content", "")
         decoding: Dict[str, Any] = dict(self.strategy.decoding or {})
         if preparation and preparation.get("decoding_override"):
             decoding.update(preparation["decoding_override"])  # type: ignore[arg-type]
@@ -150,21 +230,9 @@ class HFChatAgent:
         raw_output = ""
 
         for attempt in range(max_attempts):
+            convo: List[Dict[str, str]] = list(base_messages)
             if attempt and errors:
-                retry_content = base_user_content
-                if retry_content:
-                    retry_content = f"{retry_content}\n\n{_retry_instructions(errors)}"
-                else:
-                    retry_content = _retry_instructions(errors)
-                convo = [
-                    dict(system_message),
-                    {
-                        "role": "user",
-                        "content": retry_content,
-                    },
-                ]
-            else:
-                convo = [dict(system_message), dict(user_message)]
+                convo.append({"role": "user", "content": _retry_instructions(errors)})
 
             raw_output = generate_json_only(
                 self.tokenizer,
@@ -173,12 +241,11 @@ class HFChatAgent:
                 decoding=decoding,
             )
 
-            trailer = extract_control_trailer(raw_output)
-            if not trailer:
-                errors = ["Missing <<<CTRL{...}CTRL>>> control trailer at end of message."]
+            json_payload = _extract_last_json(raw_output)
+            if not json_payload:
+                errors = ["Response did not contain a JSON object."]
                 continue
 
-            body, json_payload = trailer
             try:
                 candidate = json.loads(json_payload)
             except json.JSONDecodeError as exc:
@@ -187,37 +254,25 @@ class HFChatAgent:
                 ]
                 continue
 
-            if not isinstance(candidate, Mapping):
-                errors = ["Control trailer must contain a JSON object with tag, status, and intent."]
-                continue
-
-            errors = validate_control_payload(candidate)
+            errors = _validate_envelope_candidate(candidate)
             if errors:
                 continue
 
-            envelope = envelope_from_payload(candidate, body=body)
+            envelope = repair_envelope(candidate)
             return envelope, raw_output
 
         fallback: Dict[str, Any] = {
             "tag": "[CONTACT]",
             "status": "NEED_PEER",
             "content": {
-                "intent": "QUESTION",
-                "body": base_user_content,
+                "acl": "QUESTION: Unable to parse your last reply => WAIT_FOR_PEER",
             },
         }
-        payload = {
-            "tag": fallback["tag"],
-            "status": fallback["status"],
-            "intent": "QUESTION",
-        }
         if errors:
-            fallback_errors = list(errors)
-            fallback["content"]["errors"] = fallback_errors
-            payload["errors"] = fallback_errors
+            fallback["content"]["errors"] = list(errors)
 
-        return envelope_from_payload(payload, body=base_user_content), raw_output
+        return repair_envelope(fallback), raw_output
 
 
-__all__ = ["HFChatAgent", "CONTROL_TRAILER_GUIDE"]
+__all__ = ["HFChatAgent", "JSON_GUIDE"]
 
