@@ -3,6 +3,12 @@ from __future__ import annotations
 import json
 from typing import Any, Dict, List, Mapping, Optional, Sequence, Tuple
 
+from .control_trailer import (
+    CONTROL_TRAILER_GUIDE,
+    envelope_from_payload,
+    extract_control_trailer,
+    validate_control_payload,
+)
 from .model_loader import generate_json_only
 from .pseudocode import augment_system_prompt
 from .sanitize import ALLOWED_STATUS, repair_envelope
@@ -12,18 +18,13 @@ from .utils import ALLOWED_PERFORMATIVES, ACLParseError, parse_acl_message
 
 _PERFORMATIVE_LIST = ", ".join(ALLOWED_PERFORMATIVES)
 
-JSON_GUIDE = (
-    "You are one of two collaborating agents. Respond with a SINGLE JSON object ONLY.\n"
-    "Fields:\n"
-    "- tag: exactly '[CONTACT]' when you need your peer, or '[SOLVED]' when you are done.\n"
-    "- status: one of WORKING, NEED_PEER, PROPOSED, READY_TO_SOLVE, SOLVED.\n"
-    "- content.acl: coordination message formatted as 'INTENT: message => next_action'.\n"
-    f"  Allowed INTENT values: {_PERFORMATIVE_LIST}.\n"
-    "- final_solution: include when you share a candidate resolution or confirm acceptance. canonical_text must be a short, stable string that your partner can copy exactly.\n"
-    "Consensus handshake: when you accept your partner's final solution, reply with tag '[SOLVED]' and status 'SOLVED', set content.verdict to 'ACCEPT', and set final_solution.canonical_text to EXACTLY match the partner's canonical_text. If you cannot accept, respond with status 'REVISED' explaining what is missing.\n"
-    "Return ONLY the JSON object. No preamble, no backticks, no extra text.\n"
-    "GOOD acl example: 'PROPOSE: outline solution steps => WAIT_FOR_PEER'.\n"
-    "BAD acl example: 'I think we should do X' (missing INTENT prefix).\n"
+TRAILER_REMINDER = (
+    "Control trailer reminder:\n"
+    "- Place a single line trailer at the end of the message in the form <<<CTRL{...}CTRL>>>.\n"
+    "- Include tag, status, and intent (allowed intents: "
+    f"{_PERFORMATIVE_LIST}).\n"
+    "- When proposing or accepting a solution, add final_solution.canonical_text.\n"
+    "Messages without a valid trailer will be rejected."
 )
 
 
@@ -159,8 +160,8 @@ class HFChatAgent:
         if snippet:
             parts.append(snippet)
 
-        if self.strategy.json_only and not prep.get("omit_json_guide"):
-            parts.append(JSON_GUIDE)
+        if not prep.get("omit_json_guide"):
+            parts.append(CONTROL_TRAILER_GUIDE)
 
         if prep.get("system_suffix"):
             parts.append(str(prep["system_suffix"]))
@@ -182,8 +183,15 @@ class HFChatAgent:
         if prep.get("user_prefix"):
             parts.append(str(prep["user_prefix"]))
 
-        base = f"Task: {task}\nPeer context: {peer_context}\nReturn ONLY the JSON object per schema."
-        parts.append(self.strategy.decorate_prompts(base, {"agent": self.name}))
+        base = (
+            f"Task: {task}\n"
+            f"Peer context: {peer_context}\n"
+            "Respond in your preferred style, then append the control trailer exactly as instructed."
+        )
+        prompt_context = {"agent": self.name}
+        decorated = self.strategy.decorate_prompts(base, prompt_context)
+        parts.append(decorated)
+        parts.append(TRAILER_REMINDER)
 
         if prep.get("user_suffix"):
             parts.append(str(prep["user_suffix"]))
