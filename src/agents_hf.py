@@ -1,14 +1,13 @@
 from __future__ import annotations
 
 import json
-import re
-from typing import Any, Dict, List, Mapping, Optional, Tuple
+from typing import Any, Dict, List, Mapping, Optional, Sequence, Tuple
 
 from .model_loader import generate_json_only
 from .pseudocode import augment_system_prompt
-from .sanitize import repair_envelope
+from .sanitize import ALLOWED_STATUS, repair_envelope
 from .strategies import Strategy
-from .utils import ALLOWED_PERFORMATIVES
+from .utils import ALLOWED_PERFORMATIVES, ACLParseError, parse_acl_message
 
 
 _PERFORMATIVE_LIST = ", ".join(ALLOWED_PERFORMATIVES)
@@ -28,14 +27,99 @@ JSON_GUIDE = (
 )
 
 
-def _extract_json(text: str) -> Optional[Dict[str, Any]]:
-    match = re.search(r"\{(?:[^{}]|(?:\{[^{}]*\}))*\}", text, flags=re.DOTALL)
-    if not match:
+def _iter_json_objects(text: str) -> List[str]:
+    results: List[str] = []
+    if not isinstance(text, str):
+        return results
+
+    depth = 0
+    start: Optional[int] = None
+    in_string = False
+    escape = False
+
+    for index, char in enumerate(text):
+        if in_string:
+            if escape:
+                escape = False
+            elif char == "\\":
+                escape = True
+            elif char == '"':
+                in_string = False
+            continue
+
+        if char == '"':
+            in_string = True
+            continue
+
+        if char == '{':
+            if depth == 0:
+                start = index
+            depth += 1
+        elif char == '}':
+            if depth:
+                depth -= 1
+                if depth == 0 and start is not None:
+                    results.append(text[start : index + 1])
+                    start = None
+
+    return results
+
+
+def _extract_last_json(text: str) -> Optional[str]:
+    blocks = _iter_json_objects(text)
+    if not blocks:
         return None
-    try:
-        return json.loads(match.group(0))
-    except Exception:
-        return None
+    return blocks[-1]
+
+
+def _validate_envelope_candidate(candidate: Any) -> List[str]:
+    if not isinstance(candidate, Mapping):
+        return ["Response must be a JSON object with the expected fields."]
+
+    errors: List[str] = []
+
+    tag = candidate.get("tag")
+    if not isinstance(tag, str) or not tag.strip():
+        errors.append("Missing or empty 'tag' field.")
+
+    status = candidate.get("status")
+    if not isinstance(status, str) or status.strip().upper() not in ALLOWED_STATUS:
+        allowed = ", ".join(sorted(ALLOWED_STATUS))
+        errors.append(f"Invalid 'status'. Expected one of: {allowed}.")
+
+    content = candidate.get("content")
+    if not isinstance(content, Mapping):
+        errors.append("'content' must be an object containing an 'acl' field.")
+    else:
+        acl = content.get("acl")
+        if not isinstance(acl, str) or not acl.strip():
+            errors.append("'content.acl' must be a non-empty string following 'INTENT: message => next_action'.")
+        else:
+            try:
+                parse_acl_message(acl)
+            except ACLParseError as exc:
+                errors.append(f"Invalid ACL message: {exc}")
+
+    if "final_solution" in candidate and candidate.get("final_solution") is not None:
+        final_solution = candidate.get("final_solution")
+        if not isinstance(final_solution, Mapping):
+            errors.append("'final_solution' must be an object when provided.")
+        else:
+            canonical_text = final_solution.get("canonical_text")
+            if not isinstance(canonical_text, str) or not canonical_text.strip():
+                errors.append("'final_solution.canonical_text' must be a non-empty string when final_solution is supplied.")
+
+    return errors
+
+
+def _retry_instructions(errors: Sequence[str]) -> str:
+    bullet_list = "\n".join(f"- {msg}" for msg in errors if msg)
+    details = f"\n{bullet_list}" if bullet_list else ""
+    return (
+        "Your previous reply was not a valid JSON envelope the coordinator could parse."
+        f"{details}\n"
+        "Return a single JSON object with tag, status, content.acl, and (if applicable) final_solution.canonical_text matching the schema."
+    )
 
 
 def _maybe_add_snippet(strategy: Strategy) -> Optional[str]:
@@ -128,18 +212,76 @@ class HFChatAgent:
         transcript: List[Dict[str, Any]],
         preparation: Optional[Dict[str, Any]] = None,
     ) -> Tuple[Dict[str, Any], str]:
-        messages = self._messages(task, transcript, preparation)
-        decoding = dict(self.strategy.decoding or {})
+        base_messages = self._messages(task, transcript, preparation)
+        if len(base_messages) < 2:
+            raise ValueError("Expected at least system and user messages for generation.")
+
+        system_message = dict(base_messages[0])
+        user_message = dict(base_messages[1])
+        base_user_content = user_message.get("content", "")
+        decoding: Dict[str, Any] = dict(self.strategy.decoding or {})
         if preparation and preparation.get("decoding_override"):
             decoding.update(preparation["decoding_override"])  # type: ignore[arg-type]
 
-        raw = generate_json_only(self.tokenizer, self.model, messages, decoding=decoding)
-        envelope = _extract_json(raw)
-        if envelope is None:
-            envelope = {"status": "WORKING", "tag": "[CONTACT]", "content": {"note": "fallback"}}
+        max_attempts = 3
+        errors: List[str] = []
+        raw_output = ""
 
-        envelope = repair_envelope(envelope)
-        return envelope, raw
+        for attempt in range(max_attempts):
+            if attempt and errors:
+                retry_content = base_user_content
+                if retry_content:
+                    retry_content = f"{retry_content}\n\n{_retry_instructions(errors)}"
+                else:
+                    retry_content = _retry_instructions(errors)
+                convo = [
+                    dict(system_message),
+                    {
+                        "role": "user",
+                        "content": retry_content,
+                    },
+                ]
+            else:
+                convo = [dict(system_message), dict(user_message)]
+
+            raw_output = generate_json_only(
+                self.tokenizer,
+                self.model,
+                convo,
+                decoding=decoding,
+            )
+
+            json_payload = _extract_last_json(raw_output)
+            if not json_payload:
+                errors = ["Response did not contain a JSON object."]
+                continue
+
+            try:
+                candidate = json.loads(json_payload)
+            except json.JSONDecodeError as exc:
+                errors = [
+                    f"Invalid JSON: {exc.msg} (line {exc.lineno}, column {exc.colno})."
+                ]
+                continue
+
+            errors = _validate_envelope_candidate(candidate)
+            if errors:
+                continue
+
+            envelope = repair_envelope(candidate)
+            return envelope, raw_output
+
+        fallback: Dict[str, Any] = {
+            "tag": "[CONTACT]",
+            "status": "NEED_PEER",
+            "content": {
+                "acl": "QUESTION: Unable to parse your last reply => WAIT_FOR_PEER",
+            },
+        }
+        if errors:
+            fallback["content"]["errors"] = list(errors)
+
+        return repair_envelope(fallback), raw_output
 
 
 __all__ = ["HFChatAgent", "JSON_GUIDE"]
