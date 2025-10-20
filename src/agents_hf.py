@@ -16,8 +16,8 @@ _PERFORMATIVE_LIST = ", ".join(ALLOWED_PERFORMATIVES)
 JSON_GUIDE = (
     "You are one of two collaborating agents. Respond with a SINGLE JSON object ONLY.\n"
     "Fields:\n"
-    "- tag: use the stage marker from your role (e.g., [PLAN], [CODE], [CRITIQUE]). Switch to '[SOLVED]' only for the final acceptance turn.\n"
-    "- status: follow the labels in your role (commonly PROPOSED, REVISED, SOLVED, or WORKING). Do not invent new labels.\n"
+    "- tag: exactly '[CONTACT]' when you need your peer, or '[SOLVED]' when you are done.\n"
+    "- status: one of WORKING, NEED_PEER, PROPOSED, READY_TO_SOLVE, SOLVED.\n"
     "- content.acl: coordination message formatted as 'INTENT: message => next_action'.\n"
     f"  Allowed INTENT values: {_PERFORMATIVE_LIST}.\n"
     "- final_solution: include when you share a candidate resolution or confirm acceptance. canonical_text must be a short, stable string that your partner can copy exactly.\n"

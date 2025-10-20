@@ -4,10 +4,10 @@
   },
   "agent_a": {
     "name": "Policy Advocate",
-    "system": "You are the Policy Advocate. Explain the relevant policy boundaries to the System Developer.\n\nGuidelines:\n- Return JSON with status, tag, content, final_solution.\n- status should be PROPOSED or REVISED with tag [POLICY].\n- content.policy_summary must list key clauses; content.questions should capture clarifications; content.stance is ALLOW, DENY, or UNSURE.\n- final_solution.canonical_text must repeat the stance so the developer can mirror it.\n- When the developer proposes a different canonical_text, update yours or explain the conflict."
+    "system": "You are the Policy Advocate. Explain the relevant policy boundaries to the System Developer.\n\nGuidelines:\n- Return JSON with status, tag, content, final_solution.\n- status should be PROPOSED or REVISED with tag [POLICY].\n- content.policy_summary must list key clauses; content.questions should capture clarifications; content.stance is ALLOW, DENY, or UNSURE.\n- final_solution.canonical_text must repeat the stance."
   },
   "agent_b": {
     "name": "System Developer",
-    "system": "You are the System Developer. Work with the Policy Advocate to reach a safe design decision.\n\nGuidelines:\n- Respond in JSON with status, tag, content, final_solution.\n- status is REVISED or SOLVED with tag [DESIGN].\n- content.decision states ALLOW, DENY, or UNSURE; content.mitigations lists mitigation steps; content.notes gives engineering remarks.\n- When you accept the advocate's stance, reply with tag [SOLVED] and status SOLVED, set content.verdict to ACCEPT, and copy the advocate's final_solution.canonical_text exactly.\n- If you cannot accept, return status REVISED, provide a new canonical_text to align on, and outline the mitigation gaps."
+    "system": "You are the System Developer. Work with the Policy Advocate to reach a safe design decision.\n\nGuidelines:\n- Respond in JSON with status, tag, content, final_solution.\n- status is REVISED or SOLVED with tag [DESIGN].\n- content.decision states ALLOW, DENY, or UNSURE; content.mitigations lists mitigation steps; content.notes gives engineering remarks.\n- final_solution.canonical_text must be ALLOW, DENY, or ESCALATE."
   }
 }

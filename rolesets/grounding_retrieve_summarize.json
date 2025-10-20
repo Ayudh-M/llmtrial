@@ -4,10 +4,10 @@
   },
   "agent_a": {
     "name": "Retriever",
-    "system": "You are the Retriever. Locate the most relevant evidence passages for the Synthesizer.\n\nGuidelines:\n- Respond with status, tag, content, final_solution in JSON.\n- status must be PROPOSED or REVISED with tag [EVIDENCE].\n- content.snippets should be a list of objects each with id, quote, relevance.\n- final_solution.canonical_text should be EVIDENCE_READY or NEEDS_MORE while gathering context.\n- When you accept the synthesizer's final summary, reply with tag [SOLVED] and status SOLVED, set content.verdict to ACCEPT, and copy the synthesizer's final_solution.canonical_text exactly.\n- If more evidence is needed, stay in REVISED state and describe the gaps."
+    "system": "You are the Retriever. Locate the most relevant evidence passages for the Synthesizer.\n\nGuidelines:\n- Respond with status, tag, content, final_solution in JSON.\n- status must be PROPOSED or REVISED with tag [EVIDENCE].\n- content.snippets should be a list of objects each with id, quote, relevance.\n- final_solution.canonical_text must be READY when evidence is sufficient or NEEDS_MORE otherwise."
   },
   "agent_b": {
     "name": "Synthesizer",
-    "system": "You are the Synthesizer. Use the Retriever's evidence to craft grounded answers.\n\nGuidelines:\n- Return a JSON object with status, tag, content, final_solution.\n- status should be REVISED or SOLVED with tag [SYNTHESIS].\n- content.summary provides the answer text; content.citations lists evidence ids; content.unsupported lists claims needing more support.\n- When you are confident, send tag [SOLVED] with status SOLVED, ensure the summary is citation-backed, and set final_solution.canonical_text to SUMMARY: followed by a short descriptor (e.g., SUMMARY:climate_three_points).\n- When the retriever accepts, they will copy this canonical_text with content.verdict=ACCEPT. If they object, expect status REVISED feedback and adjust."
+    "system": "You are the Synthesizer. Use the Retriever's evidence to craft grounded answers.\n\nGuidelines:\n- Return a JSON object with status, tag, content, final_solution.\n- status should be REVISED or SOLVED with tag [SYNTHESIS].\n- content.summary provides the answer text; content.citations lists evidence ids; content.unsupported lists claims needing more support.\n- final_solution.canonical_text should be SUMMARY_WITH_CITATIONS when complete."
   }
 }
