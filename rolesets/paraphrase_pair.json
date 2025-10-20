@@ -4,14 +4,14 @@
       "name": "agent_a",
       "role": "Paraphrase Labeler",
       "domain": "semantics",
-      "model": "mistralai/Mistral-7B-Instruct-v0.2",
+      "model": "mistralai/Mistral-7B-Instruct-v0.3",
       "pack": "paraphrase_labeler"
     },
     {
       "name": "agent_b",
       "role": "Paraphrase Auditor",
       "domain": "qa",
-      "model": "mistralai/Mistral-7B-Instruct-v0.2",
+      "model": "mistralai/Mistral-7B-Instruct-v0.3",
       "pack": "paraphrase_auditor"
     }
   ]

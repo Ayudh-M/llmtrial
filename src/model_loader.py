@@ -21,7 +21,7 @@ import torch
 from transformers import AutoModelForCausalLM, AutoTokenizer
 
 TINY_MODEL_ID = "roneneldan/TinyStories-1M"
-MISTRAL_MODEL_ID = "mistralai/Mistral-7B-Instruct-v0.2"
+MISTRAL_MODEL_ID = "mistralai/Mistral-7B-Instruct-v0.3"
 
 
 def _resolve_dtype(dtype: Optional[str]):

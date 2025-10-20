@@ -4,14 +4,14 @@
       "name": "agent_a",
       "role": "MCQ Reasoner (ARC-style)",
       "domain": "commonsense",
-      "model": "mistralai/Mistral-7B-Instruct-v0.2",
+      "model": "mistralai/Mistral-7B-Instruct-v0.3",
       "pack": "mcq_reasoner_arc"
     },
     {
       "name": "agent_b",
       "role": "MCQ Auditor",
       "domain": "qa",
-      "model": "mistralai/Mistral-7B-Instruct-v0.2",
+      "model": "mistralai/Mistral-7B-Instruct-v0.3",
       "pack": "mcq_auditor"
     }
   ]
