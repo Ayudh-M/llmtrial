@@ -17,7 +17,9 @@ class FinalSolution(BaseModel):
     model_config = ConfigDict(extra="allow")
 
 class Envelope(BaseModel):
-    tag: str = Field(pattern=r"^\[(CONTACT|SOLVED)\]$")
+    # Allow any bracketed, uppercase-style tag (e.g. [PLAN], [SOLVER]) while still
+    # supporting the historical [CONTACT]/[SOLVED] tokens enforced elsewhere.
+    tag: str = Field(pattern=r"^\[[A-Z0-9_:-]+\]$")
     status: str
     content: Optional[Dict[str, Any]] = None
     final_solution: Optional[FinalSolution] = None

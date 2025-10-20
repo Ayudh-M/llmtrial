@@ -16,7 +16,7 @@ from .pseudocode import PseudocodeValidationError, validate_and_normalise_pseudo
 from .sanitize import repair_envelope
 from .schemas import Envelope
 from .strategies import Strategy
-from .utils import ACLParseError, parse_acl_message, sha256_hex
+from .utils import ACLParseError, ACLParseResult, ALLOWED_PERFORMATIVES, parse_acl_message, sha256_hex
 from .validators import get_validator
 
 
@@ -118,6 +118,16 @@ def _parse_intent(actor_label: str, env: Envelope) -> Optional[Any]:
         raise ValueError(f"Agent {actor_label} content must be an object with an 'acl' field.")
     acl = content.get("acl")
     if acl is None:
+        intent = content.get("intent")
+        if isinstance(intent, str) and intent.strip():
+            intent_upper = intent.strip().upper()
+            if intent_upper not in ALLOWED_PERFORMATIVES:
+                raise ValueError(
+                    f"Invalid intent '{intent}' from agent {actor_label}. Allowed intents: {', '.join(ALLOWED_PERFORMATIVES)}."
+                )
+            body = content.get("message") or content.get("notes") or content.get("summary") or intent_upper
+            next_action = content.get("next_action") if isinstance(content.get("next_action"), str) else None
+            return ACLParseResult(intent=intent_upper, content=str(body), next_action=next_action)
         return None
     try:
         return parse_acl_message(acl)

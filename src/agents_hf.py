@@ -1,41 +1,40 @@
 from __future__ import annotations
 
 import json
-import re
 from typing import Any, Dict, List, Mapping, Optional, Tuple
 
+from .control_trailer import (
+    CONTROL_TRAILER_GUIDE,
+    envelope_from_payload,
+    extract_control_trailer,
+    validate_control_payload,
+)
 from .model_loader import generate_json_only
 from .pseudocode import augment_system_prompt
-from .sanitize import repair_envelope
 from .strategies import Strategy
 from .utils import ALLOWED_PERFORMATIVES
 
 
 _PERFORMATIVE_LIST = ", ".join(ALLOWED_PERFORMATIVES)
 
-JSON_GUIDE = (
-    "You are one of two collaborating agents. Respond with a SINGLE JSON object ONLY.\n"
-    "Fields:\n"
-    "- tag: exactly '[CONTACT]' when you need your peer, or '[SOLVED]' when you are done.\n"
-    "- status: one of WORKING, NEED_PEER, PROPOSED, READY_TO_SOLVE, SOLVED.\n"
-    "- content.acl: coordination message formatted as 'INTENT: message => next_action'.\n"
-    f"  Allowed INTENT values: {_PERFORMATIVE_LIST}.\n"
-    "- final_solution: include when you share a candidate resolution or confirm acceptance. canonical_text must be a short, stable string that your partner can copy exactly.\n"
-    "Consensus handshake: when you accept your partner's final solution, reply with tag '[SOLVED]' and status 'SOLVED', set content.verdict to 'ACCEPT', and set final_solution.canonical_text to EXACTLY match the partner's canonical_text. If you cannot accept, respond with status 'REVISED' explaining what is missing.\n"
-    "Return ONLY the JSON object. No preamble, no backticks, no extra text.\n"
-    "GOOD acl example: 'PROPOSE: outline solution steps => WAIT_FOR_PEER'.\n"
-    "BAD acl example: 'I think we should do X' (missing INTENT prefix).\n"
+TRAILER_REMINDER = (
+    "Control trailer reminder:\n"
+    "- Place a single line trailer at the end of the message in the form <<<CTRL{...}CTRL>>>.\n"
+    "- Include tag, status, and intent (allowed intents: "
+    f"{_PERFORMATIVE_LIST}).\n"
+    "- When proposing or accepting a solution, add final_solution.canonical_text.\n"
+    "Messages without a valid trailer will be rejected."
 )
 
 
-def _extract_json(text: str) -> Optional[Dict[str, Any]]:
-    match = re.search(r"\{(?:[^{}]|(?:\{[^{}]*\}))*\}", text, flags=re.DOTALL)
-    if not match:
-        return None
-    try:
-        return json.loads(match.group(0))
-    except Exception:
-        return None
+def _retry_instructions(errors: List[str]) -> str:
+    bullet_list = "\n".join(f"- {msg}" for msg in errors if msg)
+    details = f"\n{bullet_list}" if bullet_list else ""
+    return (
+        "Your previous reply did not include a valid control trailer."
+        f"{details}\n"
+        "Rewrite your message (body as needed) and finish with <<<CTRL{{...}}CTRL>>> including tag, status, intent, and any required final_solution.canonical_text."
+    )
 
 
 def _maybe_add_snippet(strategy: Strategy) -> Optional[str]:
@@ -75,8 +74,8 @@ class HFChatAgent:
         if snippet:
             parts.append(snippet)
 
-        if self.strategy.json_only and not prep.get("omit_json_guide"):
-            parts.append(JSON_GUIDE)
+        if not prep.get("omit_json_guide"):
+            parts.append(CONTROL_TRAILER_GUIDE)
 
         if prep.get("system_suffix"):
             parts.append(str(prep["system_suffix"]))
@@ -98,8 +97,15 @@ class HFChatAgent:
         if prep.get("user_prefix"):
             parts.append(str(prep["user_prefix"]))
 
-        base = f"Task: {task}\nPeer context: {peer_context}\nReturn ONLY the JSON object per schema."
-        parts.append(self.strategy.decorate_prompts(base, {"agent": self.name}))
+        base = (
+            f"Task: {task}\n"
+            f"Peer context: {peer_context}\n"
+            "Respond in your preferred style, then append the control trailer exactly as instructed."
+        )
+        prompt_context = {"agent": self.name}
+        decorated = self.strategy.decorate_prompts(base, prompt_context)
+        parts.append(decorated)
+        parts.append(TRAILER_REMINDER)
 
         if prep.get("user_suffix"):
             parts.append(str(prep["user_suffix"]))
@@ -128,19 +134,90 @@ class HFChatAgent:
         transcript: List[Dict[str, Any]],
         preparation: Optional[Dict[str, Any]] = None,
     ) -> Tuple[Dict[str, Any], str]:
-        messages = self._messages(task, transcript, preparation)
-        decoding = dict(self.strategy.decoding or {})
+        base_messages = self._messages(task, transcript, preparation)
+        if len(base_messages) < 2:
+            raise ValueError("Expected at least system and user messages for generation.")
+
+        system_message = dict(base_messages[0])
+        user_message = dict(base_messages[1])
+        base_user_content = user_message.get("content", "")
+        decoding: Dict[str, Any] = dict(self.strategy.decoding or {})
         if preparation and preparation.get("decoding_override"):
             decoding.update(preparation["decoding_override"])  # type: ignore[arg-type]
 
-        raw = generate_json_only(self.tokenizer, self.model, messages, decoding=decoding)
-        envelope = _extract_json(raw)
-        if envelope is None:
-            envelope = {"status": "WORKING", "tag": "[CONTACT]", "content": {"note": "fallback"}}
+        max_attempts = 3
+        errors: List[str] = []
+        raw_output = ""
 
-        envelope = repair_envelope(envelope)
-        return envelope, raw
+        for attempt in range(max_attempts):
+            if attempt and errors:
+                retry_content = base_user_content
+                if retry_content:
+                    retry_content = f"{retry_content}\n\n{_retry_instructions(errors)}"
+                else:
+                    retry_content = _retry_instructions(errors)
+                convo = [
+                    dict(system_message),
+                    {
+                        "role": "user",
+                        "content": retry_content,
+                    },
+                ]
+            else:
+                convo = [dict(system_message), dict(user_message)]
+
+            raw_output = generate_json_only(
+                self.tokenizer,
+                self.model,
+                convo,
+                decoding=decoding,
+            )
+
+            trailer = extract_control_trailer(raw_output)
+            if not trailer:
+                errors = ["Missing <<<CTRL{...}CTRL>>> control trailer at end of message."]
+                continue
+
+            body, json_payload = trailer
+            try:
+                candidate = json.loads(json_payload)
+            except json.JSONDecodeError as exc:
+                errors = [
+                    f"Invalid JSON: {exc.msg} (line {exc.lineno}, column {exc.colno})."
+                ]
+                continue
+
+            if not isinstance(candidate, Mapping):
+                errors = ["Control trailer must contain a JSON object with tag, status, and intent."]
+                continue
+
+            errors = validate_control_payload(candidate)
+            if errors:
+                continue
+
+            envelope = envelope_from_payload(candidate, body=body)
+            return envelope, raw_output
+
+        fallback: Dict[str, Any] = {
+            "tag": "[CONTACT]",
+            "status": "NEED_PEER",
+            "content": {
+                "intent": "QUESTION",
+                "body": base_user_content,
+            },
+        }
+        payload = {
+            "tag": fallback["tag"],
+            "status": fallback["status"],
+            "intent": "QUESTION",
+        }
+        if errors:
+            fallback_errors = list(errors)
+            fallback["content"]["errors"] = fallback_errors
+            payload["errors"] = fallback_errors
+
+        return envelope_from_payload(payload, body=base_user_content), raw_output
 
 
-__all__ = ["HFChatAgent", "JSON_GUIDE"]
+__all__ = ["HFChatAgent", "CONTROL_TRAILER_GUIDE"]
 
