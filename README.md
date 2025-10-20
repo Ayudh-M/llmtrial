@@ -1,4 +1,3 @@
-````md
 # Snellius Clean-Start & Run Guide
 
 This is a copy-paste friendly checklist for teammates to **start clean** on Snellius, clone the repo, set up a fresh environment, and run a job on **H100**. It uses the **2025** software stack.
@@ -13,7 +12,7 @@ SSH into Snellius from your terminal:
 
 ```bash
 ssh your_username@snellius.surf.nl
-````
+```
 
 ---
 
@@ -24,7 +23,7 @@ ssh your_username@snellius.surf.nl
 squeue -u "$USER" | awk 'NR>1{print $1}' | xargs -r scancel
 
 # Remove previous checkout, venv, and HF caches (user-space only)
-rm -rf ~/projects/llm-orchestrator ~/.venvs/consensus ~/.cache/huggingface ~/.cache/hf
+rm -rf ~/projects/llmtrial ~/.venvs/consensus ~/.cache/huggingface ~/.cache/hf
 ```
 
 ---
@@ -32,10 +31,10 @@ rm -rf ~/projects/llm-orchestrator ~/.venvs/consensus ~/.cache/huggingface ~/.ca
 ## 2) Clone the repo
 
 ```bash
-REPO_URL="https://github.com/Ayudh-M/llm-orchestrator.git"   # change if needed
+REPO_URL="https://github.com/Ayudh-M/llmtrial.git"   # change if needed
 mkdir -p ~/projects && cd ~/projects
-git clone "$REPO_URL" llm-orchestrator
-cd llm-orchestrator
+git clone "$REPO_URL" llmtrial
+cd llmtrial
 git remote -v
 ```
 
@@ -46,7 +45,10 @@ git remote -v
 ```bash
 module purge
 module load 2025
-module load Python/3.12.3-GCCcore-13.3.0
+# List available Python builds in the 2025 stack and pick one that exists.
+module spider Python
+# Example (adjust to one listed by the spider command):
+module load Python/3.11.6-GCCcore-13.3.0
 
 python -m venv ~/.venvs/consensus
 source ~/.venvs/consensus/bin/activate
@@ -69,66 +71,33 @@ Expected: prints a small **FINAL TEXT** (e.g., `4`).
 
 ---
 
-## 5) H100 job script (quoted heredoc; safe to paste)
+## 5) H100 job script (already in the repo)
+
+The repository ships an H100-friendly wrapper `run_gpu_mistral.job`. Review it to confirm the
+partition/account values match your project, then make sure it is executable:
 
 ```bash
-cat > run_gpu_h100_only.job <<'SLURM'
-#!/bin/bash
-#SBATCH -J consensus_h100_only
-#SBATCH -A tesr108469
-#SBATCH -p gpu_h100
-#SBATCH --gpus=1
-#SBATCH --ntasks=1
-#SBATCH --cpus-per-task=8
-#SBATCH --mem=40G
-#SBATCH --time=00:20:00
-#SBATCH -o logs/%x-%j.out
-
-set -euo pipefail
-cd "$SLURM_SUBMIT_DIR"
-mkdir -p logs runs
-
-module purge
-module load 2025
-module load Python/3.12.3-GCCcore-13.3.0
-source "${HOME}/.venvs/consensus/bin/activate"
-
-# Use node-local scratch for Hugging Face cache (faster pulls)
-export HF_HOME="${TMPDIR:-/scratch-local/$USER/${SLURM_JOB_ID}}/hf"
-mkdir -p "$HF_HOME"
-
-# Ensure local package imports work
-export PYTHONPATH="$SLURM_SUBMIT_DIR/src:${PYTHONPATH:-}"
-
-# Ensure this is an H100 GPU
-GPU_NAME="$(nvidia-smi --query-gpu=name --format=csv,noheader | head -1 || true)"
-case "$GPU_NAME" in
-  *H100* ) echo "OK: $GPU_NAME";;
-  * ) echo "ERROR: Need H100, got: ${GPU_NAME:-unknown}"; exit 2;;
-esac
-
-SCENARIO_ID="${1:?usage: sbatch run_gpu_h100_only.job <scenario_id>}"
-srun --ntasks=1 python -m src.main --scenario "$SCENARIO_ID"
-SLURM
-chmod +x run_gpu_h100_only.job
+chmod +x run_gpu_mistral.job
 ```
 
-> If your SLURM account is not `tesr108469`, change `#SBATCH -A` accordingly.
+No here-doc copy/paste is required, so you avoid the truncated script issue that happens when the
+closing `SLURM` marker is misplaced.
 
 ---
 
 ## 6) Submit a GPU run (H100)
 
 ```bash
-JID=$(sbatch run_gpu_h100_only.job mistral_math_smoke | awk '{print $4}'); echo "JOBID=$JID"
-tail -f "logs/consensus_h100_only-$JID.out"
+JID=$(sbatch run_gpu_mistral.job mistral_math_smoke | awk '{print $4}'); echo "JOBID=$JID"
+while [ ! -f "logs/consensus_mistral-$JID.out" ]; do sleep 5; done
+tail -f "logs/consensus_mistral-$JID.out"
 ```
 
 ---
 
 ## 7) Inspect the latest run result
 
-**Option A (if the helper script exists):**
+**Option A (helper script in repo):**
 
 ```bash
 python scripts/show_latest_run.py
@@ -157,8 +126,9 @@ Edit or add scenarios in `prompts/registry.yaml`. Then:
 
 ```bash
 # Regex example (if defined in registry)
-JID=$(sbatch run_gpu_h100_only.job regex_email_basic | awk '{print $4}'); echo "JOBID=$JID"
-tail -f "logs/consensus_h100_only-$JID.out"
+JID=$(sbatch run_gpu_mistral.job regex_email_basic | awk '{print $4}'); echo "JOBID=$JID"
+while [ ! -f "logs/consensus_mistral-$JID.out" ]; do sleep 5; done
+tail -f "logs/consensus_mistral-$JID.out"
 ```
 
 You can override model/dtype in `src.main` if needed (e.g., `--model-a`, `--model-b`, `--dtype`), but by default the **strategy and models** come from the registry.
@@ -180,10 +150,7 @@ If you want to fully reset and reclone later:
 
 ```bash
 squeue -u "$USER" | awk 'NR>1{print $1}' | xargs -r scancel
-rm -rf ~/projects/llm-orchestrator ~/.venvs/consensus ~/.cache/huggingface ~/.cache/hf
+rm -rf ~/projects/llmtrial ~/.venvs/consensus ~/.cache/huggingface ~/.cache/hf
 # then repeat from Section 2
-```
-
-```
 ```
 
