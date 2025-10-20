@@ -170,11 +170,28 @@ def _load_offline_tiny_model() -> Tuple[_OfflineTinyTokenizer, _OfflineTinyModel
 
 def build_inputs(tokenizer, messages: Sequence[Dict[str, str]], *, add_generation_prompt: bool = True):
     if hasattr(tokenizer, "apply_chat_template"):
-        return tokenizer.apply_chat_template(
-            list(messages),
-            return_tensors="pt",
-            add_generation_prompt=add_generation_prompt,
-        )
+        try:
+            return tokenizer.apply_chat_template(
+                list(messages),
+                return_tensors="pt",
+                add_generation_prompt=add_generation_prompt,
+            )
+        except ValueError as exc:
+            if "chat template" not in str(exc).lower():
+                raise
+            # Some tokenizers expose ``apply_chat_template`` but do not ship a
+            # default ``chat_template`` (e.g. GPT-2 based models).  In that
+            # scenario the transformers helper raises ``ValueError`` asking for
+            # an explicit template.  Fall back to our manual prompt builder so
+            # basic generation still works during tests.
+            warnings.warn(
+                f"Falling back to manual prompt construction because chat template"
+                f" application failed: {exc}",
+                RuntimeWarning,
+                stacklevel=2,
+            )
+        # If we reach here we intentionally fall back to manual formatting
+        # below.
     parts: List[str] = []
     for message in messages:
         parts.append(f"{message['role'].upper()}: {message['content']}")
