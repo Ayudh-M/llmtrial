@@ -185,6 +185,8 @@ def _update_control_stats(stats: Dict[str, Any], env: Envelope, round_idx: int) 
         has_tail = telemetry.get("has_tail")
         trailer_start = telemetry.get("trailer_start")
         trailer_end = telemetry.get("trailer_end")
+        if telemetry.get("has_ctrl") and not telemetry.get("closed_ctrl"):
+            _register_control_error(stats, "ERR_TRAILER_INCOMPLETE")
     else:
         first_error = control.get("first_error")
         retry_count = control.get("retry_count")

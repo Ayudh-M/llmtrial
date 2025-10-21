@@ -15,11 +15,15 @@ from transformers import (
     StoppingCriteriaList,
 )
 
-from .control_trailer import CTRL_SUFFIX
+from .control_trailer import CTRL_PREFIX, CTRL_SUFFIX
 
 
 TINY_REPO = "roneneldan/TinyStories-1M"
 TINY_TOKENIZER = "EleutherAI/gpt-neo-125M"
+
+
+TRAILER_TEMPLATE = '<<<CTRL{"tag":"","status":"","content":{},"final_solution":{}}CTRL>>>'
+DEFAULT_TRAILER_MARGIN = 64
 
 
 _DTYPE_ALIASES: Mapping[str, torch.dtype] = {
@@ -53,6 +57,9 @@ class SuffixStopper(StoppingCriteria):
             self.triggered = True
             return True
         return False
+
+    def set_input_length(self, length: int) -> None:
+        self._input_length = max(int(length), 0)
 
 
 @dataclass

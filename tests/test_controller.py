@@ -244,7 +244,7 @@ def test_control_stats_summary_tracks_overflow_and_stop_reasons():
         "retry_count": 0,
         "body_len": 10,
         "trailer_len": 42,
-        "stopped_on": "ctrl",
+        "stopped_on": "suffix",
         "stopped_on_ctrl": True,
         "tokens_reserved": 16,
         "tokens_used_trailer": 20,
@@ -254,6 +254,13 @@ def test_control_stats_summary_tracks_overflow_and_stop_reasons():
         "has_tail": False,
         "trailer_start": 5,
         "trailer_end": 47,
+        "has_ctrl": True,
+        "closed_ctrl": True,
+        "tokens_body_budget": 12,
+        "tokens_trailer_budget": 20,
+        "tokens_body_overflow": 0,
+        "tokens_trailer_overflow": 0,
+        "suffix_triggered": True,
     }
     env = Envelope(
         tag="[SOLVER]",
@@ -278,6 +285,13 @@ def test_control_stats_summary_tracks_overflow_and_stop_reasons():
         "has_tail": False,
         "trailer_start": 3,
         "trailer_end": 33,
+        "has_ctrl": True,
+        "closed_ctrl": False,
+        "tokens_body_budget": 22,
+        "tokens_trailer_budget": 10,
+        "tokens_body_overflow": 0,
+        "tokens_trailer_overflow": 0,
+        "suffix_triggered": False,
     }
     env_max = Envelope(
         tag="[PLAN]",
@@ -294,3 +308,34 @@ def test_control_stats_summary_tracks_overflow_and_stop_reasons():
     assert summary["stopped_on_max_new_tokens"] == 1
     assert summary["needs_higher_reserve"] is True
     assert summary["tokens_used_trailer_total"] == 30
+
+
+def test_update_control_stats_registers_incomplete_trailer():
+    stats = {"trailer_missing_ct": 0, "invalid_trailer_ct": 0, "retry_count": 0, "first_error": None, "error_log": []}
+    telemetry = {
+        "retry_count": 0,
+        "body_len": 5,
+        "trailer_len": 12,
+        "stopped_on": "max_new_tokens",
+        "stopped_on_ctrl": False,
+        "tokens_reserved": 24,
+        "tokens_used_trailer": 8,
+        "tokens_used_body": 16,
+        "tokens_overflow": 0,
+        "tokens_used_total": 24,
+        "has_tail": True,
+        "trailer_start": 4,
+        "trailer_end": 20,
+        "has_ctrl": True,
+        "closed_ctrl": False,
+    }
+    env = Envelope(
+        tag="[PLAN]",
+        status="PROPOSED",
+        content={"control": {"telemetry": telemetry}},
+    )
+
+    _update_control_stats(stats, env, 1)
+
+    assert "ERR_TRAILER_INCOMPLETE" in stats["error_log"]
+    assert stats["invalid_trailer_ct"] >= 1
