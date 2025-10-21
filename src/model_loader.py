@@ -39,21 +39,61 @@ _DTYPE_ALIASES: Mapping[str, torch.dtype] = {
 class SuffixStop(StoppingCriteria):
     """Stop generation once the decoded text contains the CTRL suffix."""
 
-    def __init__(self, tokenizer: PreTrainedTokenizer, suffix: str, lookback_chars: int = 160) -> None:
+    def __init__(
+        self,
+        tokenizer: PreTrainedTokenizer,
+        suffix: str | Sequence[int],
+        *,
+        input_length: int | None = None,
+        lookback_chars: int = 160,
+    ) -> None:
         super().__init__()
         self._tokenizer = tokenizer
         self._suffix = suffix
-        self._lookback = max(int(lookback_chars), len(suffix))
+        if isinstance(suffix, str):
+            suffix_text = suffix
+            encoded = tokenizer.encode(suffix_text, add_special_tokens=False)
+            if hasattr(encoded, "input_ids"):
+                self._suffix_ids = [int(t) for t in encoded.input_ids]  # type: ignore[arg-type]
+            else:
+                self._suffix_ids = [int(t) for t in encoded]
+        else:
+            suffix_list = list(suffix)
+            suffix_text = tokenizer.decode(suffix_list, skip_special_tokens=False)
+            self._suffix_ids = [int(token) for token in suffix_list]
+        self._lookback = max(int(lookback_chars), len(suffix_text))
         self.triggered = False
+        self._input_length = int(input_length) if input_length is not None else None
+        self._suffix_tensor: Optional[torch.Tensor] = None
+
+    def _suffix_tensor_for(self, device: torch.device, dtype: torch.dtype) -> torch.Tensor:
+        if (
+            self._suffix_tensor is None
+            or self._suffix_tensor.device != device
+            or self._suffix_tensor.dtype != dtype
+        ):
+            self._suffix_tensor = torch.tensor(self._suffix_ids, device=device, dtype=dtype)
+        return self._suffix_tensor
+
+    def set_input_length(self, n: int) -> None:
+        self._input_length = int(n)
 
     def __call__(self, input_ids: torch.LongTensor, scores: torch.FloatTensor, **_: Any) -> bool:
-        if input_ids.numel() == 0:
+        if input_ids.numel() == 0 or not self._suffix_ids:
             return False
-        ids = input_ids[0].tolist()
-        tail = self._tokenizer.decode(ids[-512:], skip_special_tokens=False)
-        if self._suffix in tail[-self._lookback :]:
+
+        prompt_tokens = max(int(self._input_length or 0), 0)
+        prompt_tokens = min(prompt_tokens, int(input_ids.shape[-1]))
+        tail_view = input_ids[0, prompt_tokens:]
+
+        if tail_view.shape[-1] < len(self._suffix_ids):
+            return False
+
+        suffix_tensor = self._suffix_tensor_for(tail_view.device, tail_view.dtype)
+        if torch.equal(tail_view[-len(self._suffix_ids) :], suffix_tensor):
             self.triggered = True
             return True
+
         return False
 
 
@@ -385,6 +425,10 @@ def generate_with_trailer(
         if top_k is not None:
             sampling_kwargs["top_k"] = int(top_k)
 
+    if bad_words_ids is not None:
+        generate_kwargs = dict(generate_kwargs)
+        generate_kwargs.setdefault("bad_words_ids", bad_words_ids)
+
     generated = model.generate(
         input_ids=input_ids,
         attention_mask=attention_mask,
@@ -397,49 +441,95 @@ def generate_with_trailer(
         **generate_kwargs,
     )
 
+    def _analyze_text(text: str) -> Dict[str, Any]:
+        stripped = text.rstrip()
+        suffix_at_end = stripped.endswith(CTRL_SUFFIX)
+        has_tail = not suffix_at_end or len(text) != len(stripped)
+        trailer_prefix_pos = text.rfind(CTRL_PREFIX)
+        trailer_offset = -1
+        if trailer_prefix_pos != -1:
+            brace_pos = text.find("{", trailer_prefix_pos)
+            if brace_pos != -1:
+                trailer_offset = brace_pos
+        trailer_text = text[trailer_prefix_pos:] if trailer_prefix_pos != -1 else ""
+        body_text = text[:trailer_prefix_pos] if trailer_prefix_pos != -1 else text
+        return {
+            "suffix_at_end": suffix_at_end,
+            "has_tail": has_tail,
+            "trailer_offset": trailer_offset,
+            "trailer_text": trailer_text,
+            "body_text": body_text,
+        }
+
     gen_tokens = generated[0][input_ids.shape[-1] :]
+    total_tokens_used = int(gen_tokens.shape[-1])
     eos_hit = bool(len(gen_tokens) and eos_token_id is not None and int(gen_tokens[-1]) == int(eos_token_id))
     decoded = tokenizer.decode(gen_tokens, skip_special_tokens=True)
 
-    stripped = decoded.rstrip()
-    suffix_at_end = stripped.endswith(CTRL_SUFFIX)
-    has_tail = not suffix_at_end or len(decoded) != len(stripped)
-    trailer_prefix_pos = decoded.rfind(CTRL_PREFIX)
-    trailer_offset = -1
-    if trailer_prefix_pos != -1:
-        brace_pos = decoded.find("{", trailer_prefix_pos)
-        if brace_pos != -1:
-            trailer_offset = brace_pos
+    suffix_triggered = stopper.triggered
+    total_text = decoded
+    analysis = _analyze_text(total_text)
+    salvage_used = False
 
-    trailer_text = decoded[trailer_prefix_pos:] if trailer_prefix_pos != -1 else ""
-    body_text = decoded[:trailer_prefix_pos] if trailer_prefix_pos != -1 else decoded
+    if (not suffix_triggered or not analysis["suffix_at_end"]) and salvage_max_tokens > 0:
+        salvage_stopper = SuffixStop(tokenizer, CTRL_SUFFIX, input_length=int(input_ids.shape[-1]))
+        salvage_stopping = StoppingCriteriaList([salvage_stopper])
+        salvage_kwargs: Dict[str, Any] = {
+            "input_ids": input_ids,
+            "attention_mask": attention_mask,
+            "max_new_tokens": int(salvage_max_tokens),
+            "do_sample": False,
+            "stopping_criteria": salvage_stopping,
+            "pad_token_id": pad_token_id,
+            "eos_token_id": eos_token_id,
+        }
+        if bad_words_ids is not None:
+            salvage_kwargs["bad_words_ids"] = bad_words_ids
+        salvage_output = model.generate(**salvage_kwargs)
+        salvage_tokens = salvage_output[0][input_ids.shape[-1] :]
+        total_tokens_used += int(salvage_tokens.shape[-1])
+        salvage_decoded = tokenizer.decode(salvage_tokens, skip_special_tokens=True)
+        if salvage_decoded:
+            total_text = f"{total_text}{salvage_decoded}"
+        suffix_triggered = suffix_triggered or salvage_stopper.triggered
+        eos_hit = eos_hit or (
+            bool(len(salvage_tokens))
+            and eos_token_id is not None
+            and int(salvage_tokens[-1]) == int(eos_token_id)
+        )
+        analysis = _analyze_text(total_text)
+        salvage_used = True
 
+    suffix_triggered = suffix_triggered or analysis["suffix_at_end"]
+
+    trailer_text = analysis["trailer_text"]
+    body_text = analysis["body_text"]
     body_tokens = _safe_token_length(tokenizer, body_text)
     trailer_tokens = _safe_token_length(tokenizer, trailer_text)
 
-    trailer_budget = _estimate_trailer_budget(tokenizer, int(max_new_tokens))
-    body_budget = max(int(max_new_tokens) - trailer_budget, 0)
+    reserved_tokens = int(max_new_tokens) + (int(salvage_max_tokens) if salvage_used else 0)
+    trailer_budget = _estimate_trailer_budget(tokenizer, reserved_tokens)
+    body_budget = max(reserved_tokens - trailer_budget, 0)
 
-    stop_reason = "ctrl_suffix" if stopper.triggered else ("eos" if eos_hit else "max_new_tokens")
+    stop_reason = "suffix" if suffix_triggered else ("eos" if eos_hit else "max_new_tokens")
 
-    tokens_used = int(gen_tokens.shape[-1])
-    overflow_tokens = max(0, tokens_used - int(max_new_tokens))
+    overflow_tokens = max(0, total_tokens_used - reserved_tokens)
 
     return GenerationResult(
-        text=decoded,
+        text=total_text,
         stop_reason=stop_reason,
-        tokens_used=tokens_used,
+        tokens_used=total_tokens_used,
         overflow_tokens=overflow_tokens,
-        has_tail=has_tail,
-        trailer_offset=trailer_offset,
+        has_tail=analysis["has_tail"],
+        trailer_offset=analysis["trailer_offset"],
         input_tokens=int(input_ids.shape[-1]),
         max_new_tokens=int(max_new_tokens),
-        tokens_reserved=int(max_new_tokens),
+        tokens_reserved=reserved_tokens,
         body_tokens=body_tokens,
         trailer_tokens=trailer_tokens,
         tokens_body_overflow=max(body_tokens - body_budget, 0),
         tokens_trailer_overflow=max(trailer_tokens - trailer_budget, 0),
-        suffix_triggered=stopper.triggered,
+        suffix_triggered=suffix_triggered,
         body_budget=body_budget,
         trailer_budget=trailer_budget,
     )
