@@ -23,7 +23,7 @@ _PERFORMATIVE_LIST = ", ".join(ALLOWED_PERFORMATIVES)
 
 TRAILER_REMINDER = (
     "Control trailer reminder:\n"
-    "- Place a single line trailer at the end of the message in the form <<<CTRL{...}CTRL>>>.\n"
+    "- Place a single line trailer as the final characters of the message in the form <<<CTRL{...}CTRL>>>.\n"
     "- Include tag, status, and intent (allowed intents: "
     f"{_PERFORMATIVE_LIST}).\n"
     "- When proposing or accepting a solution, add final_solution.canonical_text.\n"
@@ -269,14 +269,22 @@ class HFChatAgent:
         body_style = self._body_style()
         if body_style in {"json", "dsl", "kqml"}:
             decoding["do_sample"] = False
-            decoding["temperature"] = 0.0
+            decoding.pop("temperature", None)
+            decoding.pop("top_p", None)
+            decoding.pop("top_k", None)
         else:
             if "do_sample" not in decoding:
                 decoding["do_sample"] = True
             if decoding.get("do_sample"):
                 decoding.setdefault("temperature", float(decoding.get("temperature") or 0.5))
+                if "top_p" in decoding:
+                    decoding["top_p"] = float(decoding["top_p"])
+                if "top_k" in decoding:
+                    decoding["top_k"] = int(decoding["top_k"])
             else:
-                decoding.setdefault("temperature", 0.0)
+                decoding.pop("temperature", None)
+                decoding.pop("top_p", None)
+                decoding.pop("top_k", None)
 
     def _system_prompt(self, preparation: Optional[Mapping[str, Any]]) -> str:
         prep = preparation or {}
@@ -440,8 +448,6 @@ class HFChatAgent:
         trailer_only_retry = False
 
         gen_kwargs = dict(decoding)
-        max_new_tokens = int(gen_kwargs.pop("max_new_tokens", 512))
-        do_sample = bool(gen_kwargs.pop("do_sample", False))
 
         for attempt in range(max_attempts):
             if attempt and errors:
@@ -454,12 +460,10 @@ class HFChatAgent:
                 self.model,
                 self.tokenizer,
                 convo,
-                max_new_tokens=max_new_tokens,
-                do_sample=do_sample,
                 **gen_kwargs,
             )
             last_output = result.text
-            trailer_only_retry = False
+            trailer_only_retry = result.tokens_reserved > result.max_new_tokens
 
             totals["tokens_used_total"] += max(int(result.tokens_used), 0)
             totals["tokens_reserved_total"] += max(int(result.tokens_reserved), 0)
