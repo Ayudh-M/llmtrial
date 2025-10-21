@@ -105,7 +105,7 @@ def test_trailer_only_retry_completes_truncated_trailer(monkeypatch):
     trailer_offset = completed.find("{")
     second = GenerationResult(
         text=completed,
-        stop_reason="suffix",
+        stop_reason="ctrl_suffix",
         tokens_used=8,
         overflow_tokens=0,
         has_tail=False,
@@ -139,7 +139,7 @@ def test_trailer_only_retry_completes_truncated_trailer(monkeypatch):
     control_meta = envelope["content"]["control"]
     telemetry = control_meta["telemetry"]
 
-    assert telemetry["stopped_on"] == "suffix"
+    assert telemetry["stopped_on"] == "ctrl_suffix"
     assert telemetry.get("trailer_only_retry") is True
     assert telemetry.get("closed_ctrl") is True
     assert telemetry.get("tokens_used_total") == first.tokens_used + second.tokens_used

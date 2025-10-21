@@ -6,9 +6,20 @@ from typing import Any, Dict, Optional
 
 # Human guidance you embed in prompts (safe to keep short in prod)
 CONTROL_TRAILER_GUIDE = (
-    "After your free-form message body, end with a single line control trailer:\n"
-    "<<<CTRL{ ...valid compact JSON payload... }CTRL>>>\n"
-    "The trailer must be LAST (no text after it)."
+    "You may write any free-form body first.\n"
+    "THEN you MUST end the message with EXACTLY ONE control trailer:\n\n"
+    "<<<CTRL{\n"
+    '  "tag": "[PLAN|SOLVER|CONTACT]",\n'
+    '  "status": "PROPOSED|REVISED|SOLVED|NEED_PEER",\n'
+    '  "content": { ... },\n'
+    '  "final_solution": { "canonical_text": "<STRING or null>" }\n'
+    "}CTRL>>>\n\n"
+    "Rules:\n"
+    "- The trailer must be the final characters in your message.\n"
+    "- Do not wrap it in backticks or a code block.\n"
+    "- Do not add any text after CTRL>>>.\n"
+    "- The JSON inside must be valid and self-contained.\n"
+    "- If you cannot complete the trailer, emit the partial <<<CTRL{ and continue the trailer until you close with }CTRL>>>."
 )
 
 # Public constants expected by model_loader/agents
