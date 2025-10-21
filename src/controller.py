@@ -10,13 +10,14 @@ from jsonschema import Draft7Validator
 from pydantic import ValidationError
 
 from .canonicalize import canonicalize_for_hash
+from .control_trailer import normalise_canonical_text
 from .dsl import DSLParseResult, DSLValidationError, DSLValidator
 from .json_enforcer import validate_envelope
 from .pseudocode import PseudocodeValidationError, validate_and_normalise_pseudocode
 from .sanitize import repair_envelope
 from .schemas import Envelope
 from .strategies import Strategy
-from .utils import ACLParseError, parse_acl_message, sha256_hex
+from .utils import ACLParseError, ACLParseResult, ALLOWED_PERFORMATIVES, parse_acl_message, sha256_hex
 from .validators import get_validator
 
 
@@ -118,6 +119,16 @@ def _parse_intent(actor_label: str, env: Envelope) -> Optional[Any]:
         raise ValueError(f"Agent {actor_label} content must be an object with an 'acl' field.")
     acl = content.get("acl")
     if acl is None:
+        intent = content.get("intent")
+        if isinstance(intent, str) and intent.strip():
+            intent_upper = intent.strip().upper()
+            if intent_upper not in ALLOWED_PERFORMATIVES:
+                raise ValueError(
+                    f"Invalid intent '{intent}' from agent {actor_label}. Allowed intents: {', '.join(ALLOWED_PERFORMATIVES)}."
+                )
+            body = content.get("message") or content.get("notes") or content.get("summary") or intent_upper
+            next_action = content.get("next_action") if isinstance(content.get("next_action"), str) else None
+            return ACLParseResult(intent=intent_upper, content=str(body), next_action=next_action)
         return None
     try:
         return parse_acl_message(acl)
@@ -129,21 +140,309 @@ def _intent_summary(intent_counts: Dict[str, Counter]) -> Dict[str, Any]:
     return {"intent_counts": {actor: dict(counter) for actor, counter in intent_counts.items()}}
 
 
-def _handshake_accept(prev_env: Envelope, curr_env: Envelope, kind: Optional[str]) -> Optional[str]:
-    if (
-        curr_env.tag == "[SOLVED]"
-        and curr_env.status == "SOLVED"
-        and curr_env.content
-        and str(curr_env.content.get("verdict", "")).upper() == "ACCEPT"
-        and prev_env.final_solution
-        and curr_env.final_solution
-    ):
-        prev_return = _final_return_value(prev_env) or ""
-        curr_return = _final_return_value(curr_env) or ""
-        ca = canonicalize_for_hash(prev_return, kind)
-        cb = canonicalize_for_hash(curr_return, kind)
-        if ca == cb and ca:
-            return ca
+def _register_control_error(stats: Dict[str, Any], code: str) -> None:
+    if not isinstance(code, str) or not code:
+        return
+    stats.setdefault("error_log", []).append(code)
+    if code == "missing_trailer":
+        stats["trailer_missing_ct"] = stats.get("trailer_missing_ct", 0) + 1
+    else:
+        stats["invalid_trailer_ct"] = stats.get("invalid_trailer_ct", 0) + 1
+    counts = stats.setdefault("error_counts", {})
+    counts[code] = counts.get(code, 0) + 1
+    if stats.get("first_error") is None:
+        stats["first_error"] = code
+
+
+def _update_control_stats(stats: Dict[str, Any], env: Envelope, round_idx: int) -> None:
+    content = env.content or {}
+    if not isinstance(content, dict):
+        return
+    control = content.get("control")
+    if not isinstance(control, dict):
+        stats["legacy_turns"] = stats.get("legacy_turns", 0) + 1
+        return
+
+    telemetry = control.get("telemetry")
+    if isinstance(telemetry, dict):
+        first_error = telemetry.get("first_error") or control.get("first_error")
+        retry_count = telemetry.get("retry_count")
+        body_len = telemetry.get("body_len")
+        trailer_len = telemetry.get("trailer_len")
+        stopped_on_ctrl = telemetry.get("stopped_on_ctrl")
+        stop_reason = telemetry.get("stopped_on") or telemetry.get("stop_reason")
+        tokens_reserved = telemetry.get("tokens_reserved") or telemetry.get("reserved_tokens")
+        tokens_used_body = telemetry.get("tokens_used_body")
+        tokens_used_trailer = telemetry.get("tokens_used_trailer")
+        tokens_overflow = telemetry.get("tokens_overflow")
+        tokens_body_budget = telemetry.get("tokens_body_budget") or telemetry.get("body_budget")
+        tokens_body_overflow = telemetry.get("tokens_body_overflow")
+        tokens_used_total = telemetry.get("tokens_used_total") or telemetry.get("new_tokens")
+        has_tail = telemetry.get("has_tail")
+        trailer_start = telemetry.get("trailer_start")
+        trailer_end = telemetry.get("trailer_end")
+    else:
+        first_error = control.get("first_error")
+        retry_count = control.get("retry_count")
+        body_len = control.get("body_len")
+        trailer_len = control.get("trailer_len")
+        stopped_on_ctrl = control.get("stopped_on_ctrl")
+        stop_reason = control.get("stop_reason")
+        tokens_reserved = control.get("tokens_reserved")
+        tokens_used_body = control.get("tokens_used_body")
+        tokens_used_trailer = control.get("tokens_used_trailer")
+        tokens_overflow = control.get("tokens_overflow")
+        tokens_body_budget = control.get("tokens_body_budget")
+        tokens_body_overflow = control.get("tokens_body_overflow")
+        tokens_used_total = control.get("tokens_used_total")
+        has_tail = control.get("has_tail")
+        trailer_start = control.get("trailer_start")
+        trailer_end = control.get("trailer_end")
+
+    errors = control.get("errors")
+
+    if isinstance(retry_count, int):
+        stats["retry_count"] = stats.get("retry_count", 0) + max(retry_count, 0)
+
+    if stats.get("first_error") is None and isinstance(first_error, str) and first_error:
+        stats["first_error"] = first_error
+
+    if isinstance(errors, list):
+        for entry in errors:
+            if isinstance(entry, str):
+                _register_control_error(stats, entry)
+
+    if isinstance(body_len, int):
+        stats["body_len_total"] = stats.get("body_len_total", 0) + max(body_len, 0)
+        stats["body_len_count"] = stats.get("body_len_count", 0) + 1
+
+    if isinstance(trailer_len, int):
+        stats["trailer_len_total"] = stats.get("trailer_len_total", 0) + max(trailer_len, 0)
+        stats["trailer_len_count"] = stats.get("trailer_len_count", 0) + 1
+
+    if isinstance(tokens_reserved, int):
+        stats["tokens_reserved_total"] = stats.get("tokens_reserved_total", 0) + max(tokens_reserved, 0)
+        stats["tokens_reserved_count"] = stats.get("tokens_reserved_count", 0) + 1
+
+    if isinstance(tokens_used_body, int):
+        stats["tokens_used_body_total"] = stats.get("tokens_used_body_total", 0) + max(tokens_used_body, 0)
+
+    if isinstance(tokens_used_trailer, int):
+        stats["tokens_used_trailer_total"] = stats.get("tokens_used_trailer_total", 0) + max(tokens_used_trailer, 0)
+
+    if isinstance(tokens_used_total, int):
+        stats["tokens_used_total"] = stats.get("tokens_used_total", 0) + max(tokens_used_total, 0)
+
+    if isinstance(tokens_overflow, int) and tokens_overflow > 0:
+        stats["overflow_turns"] = stats.get("overflow_turns", 0) + 1
+        stats["max_overflow"] = max(stats.get("max_overflow", 0), tokens_overflow)
+        stats["needs_higher_reserve"] = True
+
+    if isinstance(tokens_body_overflow, int) and tokens_body_overflow > 0:
+        stats["body_overflow_turns"] = stats.get("body_overflow_turns", 0) + 1
+
+    if isinstance(stopped_on_ctrl, bool) and stopped_on_ctrl:
+        stats["stopped_on_ctrl_ct"] = stats.get("stopped_on_ctrl_ct", 0) + 1
+
+    if isinstance(stop_reason, str) and stop_reason in {"ctrl", "eos", "max_new_tokens"}:
+        stop_counts = stats.setdefault("stop_reasons", {})
+        stop_counts[stop_reason] = stop_counts.get(stop_reason, 0) + 1
+        if stop_reason == "ctrl":
+            stats["stopped_on_ctrl_ct"] = stats.get("stopped_on_ctrl_ct", 0) + 1
+        if stop_reason == "max_new_tokens":
+            stats["needs_higher_reserve"] = True
+
+    if env.final_solution and env.status in {"PROPOSED", "READY_TO_SOLVE"}:
+        stats.setdefault("first_valid_round", round_idx)
+
+    if has_tail:
+        _register_control_error(stats, "not_at_end")
+
+    if isinstance(trailer_start, int) and isinstance(trailer_end, int):
+        offsets = stats.setdefault("trailer_offsets", [])
+        offsets.append({"round": round_idx, "start": trailer_start, "end": trailer_end})
+
+
+def _control_summary(stats: Dict[str, Any]) -> Dict[str, Any]:
+    summary: Dict[str, Any] = {
+        "trailer_missing_ct": stats.get("trailer_missing_ct", 0),
+        "invalid_trailer_ct": stats.get("invalid_trailer_ct", 0),
+        "retry_count": stats.get("retry_count", 0),
+    }
+    if stats.get("first_error"):
+        summary["first_error"] = stats["first_error"]
+    if stats.get("error_log"):
+        summary["error_log"] = list(stats["error_log"])
+    if stats.get("stopped_on_ctrl_ct"):
+        summary["stopped_on_ctrl_ct"] = stats["stopped_on_ctrl_ct"]
+    if stats.get("handshake_error_ct"):
+        summary["handshake_error_ct"] = stats["handshake_error_ct"]
+    if stats.get("legacy_turns"):
+        summary["legacy_turns"] = stats["legacy_turns"]
+    if stats.get("overflow_turns"):
+        summary["overflow_turns"] = stats["overflow_turns"]
+    if stats.get("max_overflow"):
+        summary["max_overflow"] = stats["max_overflow"]
+    if stats.get("body_overflow_turns"):
+        summary["body_overflow_turns"] = stats["body_overflow_turns"]
+    if stats.get("needs_higher_reserve"):
+        summary["needs_higher_reserve"] = bool(stats["needs_higher_reserve"])
+    if stats.get("solved_round"):
+        summary["solved_round"] = stats["solved_round"]
+    if stats.get("proposer"):
+        summary["proposer"] = stats["proposer"]
+    if stats.get("acceptor"):
+        summary["acceptor"] = stats["acceptor"]
+    if stats.get("final_canonical"):
+        summary["final_canonical"] = stats["final_canonical"]
+    body_count = stats.get("body_len_count", 0)
+    if body_count:
+        summary["avg_body_len"] = stats.get("body_len_total", 0) / body_count
+    trailer_count = stats.get("trailer_len_count", 0)
+    if trailer_count:
+        summary["avg_trailer_len"] = stats.get("trailer_len_total", 0) / trailer_count
+    tokens_reserved_total = stats.get("tokens_reserved_total")
+    tokens_reserved_count = stats.get("tokens_reserved_count")
+    if tokens_reserved_total and tokens_reserved_count:
+        summary["avg_tokens_reserved"] = tokens_reserved_total / max(tokens_reserved_count, 1)
+    if stats.get("tokens_used_trailer_total"):
+        summary["tokens_used_trailer_total"] = stats["tokens_used_trailer_total"]
+    if stats.get("tokens_used_body_total"):
+        summary["tokens_used_body_total"] = stats["tokens_used_body_total"]
+    if stats.get("tokens_used_total"):
+        summary["tokens_used_total"] = stats["tokens_used_total"]
+    if stats.get("first_valid_round"):
+        summary["first_valid_round"] = stats["first_valid_round"]
+    if stats.get("first_proposal_round"):
+        summary["first_proposal_round"] = stats["first_proposal_round"]
+    stop_reasons = stats.get("stop_reasons")
+    if isinstance(stop_reasons, dict):
+        for reason, count in stop_reasons.items():
+            summary[f"stopped_on_{reason}"] = count
+    if stats.get("error_counts"):
+        summary["error_counts"] = dict(stats["error_counts"])
+    if stats.get("trailer_offsets"):
+        summary["trailer_offsets"] = list(stats["trailer_offsets"])
+    return summary
+
+
+class HandshakeTracker:
+    """Track proposal/acceptance transitions for SOLVED handshakes."""
+
+    def __init__(self) -> None:
+        self.pending_actor: Optional[str] = None
+        self.pending_canonical: Optional[str] = None
+        self.pending_round: Optional[int] = None
+
+    def observe(self, actor: str, env: Envelope, round_idx: int) -> Optional[Dict[str, Any]]:
+        status = (env.status or "").strip().upper()
+        tag = (env.tag or "").strip().upper()
+        final = env.final_solution
+        canonical: Optional[str] = None
+        if final and isinstance(final.canonical_text, str):
+            canonical = normalise_canonical_text(final.canonical_text)
+            if canonical:
+                canonical = canonical.strip()
+
+        if canonical and status not in {"PROPOSED", "READY_TO_SOLVE", "SOLVED"} and tag != "[SOLVED]":
+            return {
+                "kind": "error",
+                "actor": actor,
+                "error": "illegal_transition",
+                "round": round_idx,
+            }
+
+        if status in {"PROPOSED", "READY_TO_SOLVE"}:
+            if canonical:
+                self.pending_actor = actor
+                self.pending_canonical = canonical
+                self.pending_round = round_idx
+                return {
+                    "kind": "proposal",
+                    "actor": actor,
+                    "canonical": canonical,
+                    "round": round_idx,
+                }
+            return {
+                "kind": "error",
+                "actor": actor,
+                "error": "missing_canonical",
+                "round": round_idx,
+            }
+
+        if tag == "[SOLVED]" and status == "SOLVED":
+            if not canonical:
+                return {
+                    "kind": "error",
+                    "actor": actor,
+                    "error": "missing_canonical",
+                    "round": round_idx,
+                }
+            if not self.pending_actor or not self.pending_canonical:
+                return {
+                    "kind": "error",
+                    "actor": actor,
+                    "error": "illegal_transition",
+                    "round": round_idx,
+                }
+            if self.pending_actor == actor:
+                return {
+                    "kind": "error",
+                    "actor": actor,
+                    "error": "illegal_transition",
+                    "round": round_idx,
+                }
+            if normalise_canonical_text(canonical) == normalise_canonical_text(self.pending_canonical):
+                accepted = {
+                    "kind": "accepted",
+                    "actor": actor,
+                    "canonical": normalise_canonical_text(canonical),
+                    "proposer": self.pending_actor,
+                    "round": round_idx,
+                }
+                self.pending_actor = None
+                self.pending_canonical = None
+                self.pending_round = None
+                return accepted
+            return {
+                "kind": "error",
+                "actor": actor,
+                "error": "illegal_transition",
+                "round": round_idx,
+            }
+
+        return None
+
+
+def _handle_handshake_event(stats: Dict[str, Any], event: Optional[Dict[str, Any]]) -> Optional[Dict[str, Any]]:
+    if not event:
+        return None
+    kind = event.get("kind")
+    if kind == "proposal":
+        round_idx = event.get("round")
+        if stats.get("first_proposal_round") is None and isinstance(round_idx, int):
+            stats["first_proposal_round"] = round_idx
+        stats["proposer"] = event.get("actor")
+        stats["pending_canonical"] = event.get("canonical")
+        return None
+    if kind == "error":
+        code = event.get("error")
+        if isinstance(code, str):
+            _register_control_error(stats, code)
+            stats["handshake_error_ct"] = stats.get("handshake_error_ct", 0) + 1
+            log = stats.setdefault("handshake_error_log", [])
+            log.append({k: event.get(k) for k in ("round", "actor", "error")})
+        return None
+    if kind == "accepted":
+        round_idx = event.get("round")
+        if isinstance(round_idx, int):
+            stats["solved_round"] = round_idx
+        stats["acceptor"] = event.get("actor")
+        if event.get("proposer"):
+            stats["proposer"] = event.get("proposer")
+        if event.get("canonical"):
+            stats["final_canonical"] = event.get("canonical")
+        return event
     return None
 
 
@@ -227,6 +526,14 @@ def run_controller(
     last_parse: Dict[str, Optional[DSLParseResult]] = {"a": None, "b": None}
     solved_text: Dict[str, Optional[str]] = {"a": None, "b": None}
     final_message: Optional[Dict[str, Any]] = None
+    control_stats: Dict[str, Any] = {
+        "trailer_missing_ct": 0,
+        "invalid_trailer_ct": 0,
+        "retry_count": 0,
+        "first_error": None,
+        "error_log": [],
+    }
+    handshake = HandshakeTracker()
 
     for round_idx in range(1, eff_max_rounds + 1):
         controller_ctx["round"] = round_idx
@@ -344,6 +651,31 @@ def run_controller(
 
             last_env["a"] = env_a
             solved_text["a"] = _final_return_value(env_a)
+            _update_control_stats(control_stats, env_a, round_idx)
+
+            accepted_a = _handle_handshake_event(control_stats, handshake.observe("a", env_a, round_idx))
+            if accepted_a:
+                canonical = str(accepted_a.get("canonical") or "").strip()
+                ca, ha = _canon_and_hash(canonical, kind)
+                final_message = {
+                    "actor": "a",
+                    "envelope": env_a.model_dump(),
+                    "canonical_text": ca,
+                }
+                if last_parse["a"] is not None:
+                    final_message["dsl"] = last_parse["a"].to_trace_entry(round_idx, "a")
+                analytics = _intent_summary(intent_counts)
+                analytics["control"] = _control_summary(control_stats)
+                return {
+                    "status": "CONSENSUS",
+                    "rounds": round_idx,
+                    "canonical_text": ca,
+                    "sha256": ha,
+                    "transcript": transcript,
+                    "dsl_trace": dsl_trace,
+                    "analytics": analytics,
+                    "final_message": final_message,
+                }
 
             parsed_intent = _parse_intent("A", env_a)
             if parsed_intent:
@@ -459,6 +791,31 @@ def run_controller(
 
             last_env["b"] = env_b
             solved_text["b"] = _final_return_value(env_b)
+            _update_control_stats(control_stats, env_b, round_idx)
+
+            accepted_b = _handle_handshake_event(control_stats, handshake.observe("b", env_b, round_idx))
+            if accepted_b:
+                canonical = str(accepted_b.get("canonical") or "").strip()
+                cb, hb = _canon_and_hash(canonical, kind)
+                final_message = {
+                    "actor": "b",
+                    "envelope": env_b.model_dump(),
+                    "canonical_text": cb,
+                }
+                if last_parse["b"] is not None:
+                    final_message["dsl"] = last_parse["b"].to_trace_entry(round_idx, "b")
+                analytics = _intent_summary(intent_counts)
+                analytics["control"] = _control_summary(control_stats)
+                return {
+                    "status": "CONSENSUS",
+                    "rounds": round_idx,
+                    "canonical_text": cb,
+                    "sha256": hb,
+                    "transcript": transcript,
+                    "dsl_trace": dsl_trace,
+                    "analytics": analytics,
+                    "final_message": final_message,
+                }
 
             parsed_intent = _parse_intent("B", env_b)
             if parsed_intent:
@@ -475,7 +832,10 @@ def run_controller(
                     final_message = {
                         "actor": "b",
                         "envelope": transcript[-1]["envelope"],
+                        "canonical_text": ca,
                     }
+                    analytics = _intent_summary(intent_counts)
+                    analytics["control"] = _control_summary(control_stats)
                     return {
                         "status": "CONSENSUS",
                         "rounds": round_idx,
@@ -483,52 +843,12 @@ def run_controller(
                         "sha256": ha,
                         "transcript": transcript,
                         "dsl_trace": dsl_trace,
-                        "analytics": _intent_summary(intent_counts),
+                        "analytics": analytics,
                         "final_message": final_message,
                     }
         else:
             env_a_latest = last_env["a"]
             env_b_latest = last_env["b"]
-            if env_a_latest and env_b_latest:
-                canon = _handshake_accept(env_b_latest, env_a_latest, kind)
-                if canon:
-                    final_message = {
-                        "actor": "a",
-                        "envelope": env_a_latest.model_dump(),
-                    }
-                    if last_parse["a"] is not None:
-                        final_message["dsl"] = last_parse["a"].to_trace_entry(round_idx, "a")
-                    ca, ha = _canon_and_hash(canon, kind)
-                    return {
-                        "status": "CONSENSUS",
-                        "rounds": round_idx,
-                        "canonical_text": ca,
-                        "sha256": ha,
-                        "transcript": transcript,
-                        "dsl_trace": dsl_trace,
-                        "analytics": _intent_summary(intent_counts),
-                        "final_message": final_message,
-                    }
-                canon = _handshake_accept(env_a_latest, env_b_latest, kind)
-                if canon:
-                    final_message = {
-                        "actor": "b",
-                        "envelope": env_b_latest.model_dump(),
-                    }
-                    if last_parse["b"] is not None:
-                        final_message["dsl"] = last_parse["b"].to_trace_entry(round_idx, "b")
-                    cb, hb = _canon_and_hash(canon, kind)
-                    return {
-                        "status": "CONSENSUS",
-                        "rounds": round_idx,
-                        "canonical_text": cb,
-                        "sha256": hb,
-                        "transcript": transcript,
-                        "dsl_trace": dsl_trace,
-                        "analytics": _intent_summary(intent_counts),
-                        "final_message": final_message,
-                    }
-
             final_a = solved_text["a"]
             final_b = solved_text["b"]
             if final_a and final_b:
@@ -538,9 +858,12 @@ def run_controller(
                     final_message = {
                         "actor": "b",
                         "envelope": env_b_latest.model_dump() if env_b_latest else {},
+                        "canonical_text": ca,
                     }
                     if last_parse["b"] is not None:
                         final_message["dsl"] = last_parse["b"].to_trace_entry(round_idx, "b")
+                    analytics = _intent_summary(intent_counts)
+                    analytics["control"] = _control_summary(control_stats)
                     return {
                         "status": "CONSENSUS",
                         "rounds": round_idx,
@@ -548,16 +871,18 @@ def run_controller(
                         "sha256": ha,
                         "transcript": transcript,
                         "dsl_trace": dsl_trace,
-                        "analytics": _intent_summary(intent_counts),
+                        "analytics": analytics,
                         "final_message": final_message,
                     }
 
+    analytics = _intent_summary(intent_counts)
+    analytics["control"] = _control_summary(control_stats)
     return {
         "status": "NO_CONSENSUS",
         "rounds": eff_max_rounds,
         "transcript": transcript,
         "dsl_trace": dsl_trace,
-        "analytics": _intent_summary(intent_counts),
+        "analytics": analytics,
         "final_message": final_message,
     }
 

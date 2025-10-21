@@ -275,6 +275,7 @@ register_strategy(
         agent_profile=AgentProfile(greedy=True, k_samples=1, max_new_tokens=256),
         metadata={
             "title": "Baseline strict JSON negotiation",
+            "body_style": "json",
         },
     )
 )
@@ -308,6 +309,7 @@ register_strategy(
         agent_profile=AgentProfile(greedy=True, k_samples=1, max_new_tokens=192),
         metadata={
             "title": "Quick strict JSON runs",
+            "body_style": "json",
         },
     )
 )
@@ -345,6 +347,7 @@ register_strategy(
         agent_profile=AgentProfile(greedy=True, k_samples=1, max_new_tokens=384),
         metadata={
             "title": "Planner/executor/tester structured turn-taking",
+            "body_style": "pseudocode",
         },
     )
 )
@@ -382,6 +385,7 @@ register_strategy(
         agent_profile=AgentProfile(greedy=True, k_samples=1, max_new_tokens=320),
         metadata={
             "title": "Self-reflection refinement loop",
+            "body_style": "nl",
         },
     )
 )
@@ -419,6 +423,7 @@ register_strategy(
         agent_profile=AgentProfile(greedy=True, k_samples=1, max_new_tokens=320),
         metadata={
             "title": "Policy citation and safe-edit workflow",
+            "body_style": "kqml",
         },
     )
 )
@@ -456,6 +461,7 @@ register_strategy(
         agent_profile=AgentProfile(greedy=False, k_samples=1, max_new_tokens=384),
         metadata={
             "title": "Peer debate with critique tracking",
+            "body_style": "nl",
         },
     )
 )
