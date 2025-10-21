@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import json
 from decimal import Decimal, InvalidOperation
-from typing import Any, Dict, Optional, Tuple
+from typing import Any, Dict, Optional
 
 # Human guidance you embed in prompts (safe to keep short in prod)
 CONTROL_TRAILER_GUIDE = (
@@ -12,55 +12,10 @@ CONTROL_TRAILER_GUIDE = (
 )
 
 # Public constants expected by model_loader/agents
-CTRL_PREFIX = "<<<CTRL{"
-CTRL_SUFFIX = "}CTRL>>>"
+CTRL_PREFIX = "<<<CTRL"
+CTRL_SUFFIX = "CTRL>>>"
 
 # End-anchored matcher implemented via manual brace scanning.
-
-
-def _balanced_object_from_end(text: str) -> Optional[Tuple[int, int, str]]:
-    """
-    Find last balanced {...} immediately preceding CTRL>>> and return (start, end, json_text).
-    Enforces end-anchoring on the CTRL suffix.
-    """
-    suffix_pos = text.rfind(CTRL_SUFFIX)
-    if suffix_pos == -1:
-        return None
-
-    idx = suffix_pos - 1
-    depth = 0
-    in_string = False
-    escape = False
-    start = -1
-
-    while idx >= 0:
-        char = text[idx]
-        if in_string:
-            if escape:
-                escape = False
-            elif char == "\\":
-                escape = True
-            elif char == '"':
-                in_string = False
-        else:
-            if char == '"':
-                in_string = True
-            elif char == '}':
-                depth += 1
-            elif char == '{':
-                if depth == 0:
-                    start = idx
-                    break
-                depth -= 1
-        idx -= 1
-
-    if start == -1:
-        return None
-
-    json_text = text[start:suffix_pos]
-    return start, suffix_pos, json_text
-
-
 def extract_control_trailer(text: str) -> Dict[str, Any]:
     """
     Returns: {
@@ -78,33 +33,100 @@ def extract_control_trailer(text: str) -> Dict[str, Any]:
         "error": "NOT_FOUND",
         "offsets": {"json_start": -1, "json_end": -1, "suffix_at_end": False},
     }
-    hit = _balanced_object_from_end(text)
-    if not hit:
+    prefix_pos = text.rfind(CTRL_PREFIX)
+    if prefix_pos != -1:
+        out["body"] = text[:prefix_pos]
+    cursor = prefix_pos + len(CTRL_PREFIX)
+    length = len(text)
+    while cursor < length and text[cursor].isspace():
+        cursor += 1
+
+    if cursor >= length or text[cursor] != "{":
+        out["error"] = "ERR_TRAILER_UNCLOSED"
+        out["offsets"].update(
+            {
+                "json_start": cursor if cursor < length else -1,
+                "json_end": length,
+                "suffix_at_end": False,
+            }
+        )
         return out
-    jstart, jend, jtxt = hit
-    # Confirm suffix is exactly at end
-    suffix_pos = text.find(CTRL_SUFFIX, jend - 1)
-    suffix_ok = suffix_pos != -1 and suffix_pos + len(CTRL_SUFFIX) == len(text)
-    if not suffix_ok:
+
+    json_start = cursor
+    depth = 0
+    in_string = False
+    escape = False
+    json_end = -1
+    idx = cursor
+
+    while idx < length:
+        char = text[idx]
+        if in_string:
+            if escape:
+                escape = False
+            elif char == "\\":
+                escape = True
+            elif char == '"':
+                in_string = False
+        else:
+            if char == '"':
+                in_string = True
+            elif char == '{':
+                depth += 1
+            elif char == '}':
+                if depth:
+                    depth -= 1
+                    if depth == 0:
+                        json_end = idx + 1
+                        break
+                else:
+                    break
+        idx += 1
+
+    if json_end == -1:
+        out["error"] = "ERR_TRAILER_UNCLOSED"
+        out["offsets"].update(
+            {
+                "json_start": json_start,
+                "json_end": length,
+                "suffix_at_end": False,
+            }
+        )
+        return out
+
+    suffix_start = json_end
+    if not text.startswith(CTRL_SUFFIX, suffix_start) or suffix_start + len(CTRL_SUFFIX) != length:
         out["error"] = "SUFFIX_NOT_AT_END"
-        out["offsets"].update({"json_start": jstart, "json_end": jend, "suffix_at_end": False})
-        out["body"] = text[: jstart - len(CTRL_PREFIX)]
+        out["offsets"].update(
+            {
+                "json_start": json_start,
+                "json_end": json_end,
+                "suffix_at_end": False,
+            }
+        )
         return out
-    # Parse payload
+
+    json_text = text[json_start:json_end]
     try:
-        payload = json.loads(jtxt)
+        payload = json.loads(json_text)
     except Exception as exc:  # pragma: no cover - propagate message detail
         out["error"] = f"JSON_DECODE_ERROR: {exc}"
-        out["offsets"].update({"json_start": jstart, "json_end": jend, "suffix_at_end": True})
-        out["body"] = text[: jstart - len(CTRL_PREFIX)]
+        out["offsets"].update(
+            {
+                "json_start": json_start,
+                "json_end": json_end,
+                "suffix_at_end": True,
+            }
+        )
         return out
+
     out.update(
         {
             "ok": True,
-            "body": text[: jstart - len(CTRL_PREFIX)],
+            "body": text[:prefix_pos],
             "payload": payload,
             "error": None,
-            "offsets": {"json_start": jstart, "json_end": jend, "suffix_at_end": True},
+            "offsets": {"json_start": json_start, "json_end": json_end, "suffix_at_end": True},
         }
     )
     return out
