@@ -67,11 +67,19 @@ class GenerationResult:
     text: str
     stop_reason: str
     tokens_used: int
-    overflow_tokens: int
-    has_tail: bool
-    trailer_offset: int
+    overflow_tokens: int = 0
+    has_tail: bool = False
+    trailer_offset: int = -1
     input_tokens: int = 0
     max_new_tokens: int = 0
+    tokens_reserved: int = 0
+    body_tokens: int = 0
+    trailer_tokens: int = 0
+    tokens_body_overflow: int = 0
+    tokens_trailer_overflow: int = 0
+    suffix_triggered: bool = False
+    body_budget: int = 0
+    trailer_budget: int = 0
 
 
 def _resolve_dtype(dtype: Optional[str]) -> Optional[torch.dtype]:

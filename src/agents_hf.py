@@ -157,6 +157,8 @@ def _telemetry_from(
     extraction: Dict[str, Any],
     failure_codes: Sequence[str],
     attempt: int,
+    totals: Optional[Mapping[str, Any]] = None,
+    trailer_only_retry: bool = False,
 ) -> Dict[str, Any]:
     offsets = extraction.get("offsets") or {}
     json_start = offsets.get("json_start", -1)
@@ -166,6 +168,18 @@ def _telemetry_from(
     trailer_len = max(json_end - json_start, 0)
     trailer_start = json_start - len(CTRL_PREFIX) if json_start >= 0 else -1
     trailer_end = json_end + len(CTRL_SUFFIX) if json_end >= 0 else -1
+    totals = dict(totals or {})
+    tokens_used_total = int(totals.get("tokens_used_total", result.tokens_used))
+    tokens_reserved_total = int(totals.get("tokens_reserved_total", result.tokens_reserved))
+    body_tokens_total = int(totals.get("body_tokens_total", result.body_tokens))
+    trailer_tokens_total = int(totals.get("trailer_tokens_total", result.trailer_tokens))
+    body_overflow_total = int(totals.get("tokens_body_overflow_total", result.tokens_body_overflow))
+    trailer_overflow_total = int(
+        totals.get("tokens_trailer_overflow_total", result.tokens_trailer_overflow)
+    )
+    body_budget = int(totals.get("body_budget", result.body_budget))
+    trailer_budget = int(totals.get("trailer_budget", result.trailer_budget))
+    closed_ctrl = suffix_at_end and not result.has_tail
     telemetry = {
         "retry_count": attempt,
         "error_log": list(failure_codes),
@@ -181,7 +195,16 @@ def _telemetry_from(
         "trailer_start": trailer_start,
         "trailer_end": trailer_end,
         "stopped_on_ctrl": result.stop_reason == "suffix" and suffix_at_end,
-        "tokens_used_total": result.tokens_used,
+        "tokens_used_total": tokens_used_total,
+        "tokens_reserved": tokens_reserved_total,
+        "tokens_body_total": body_tokens_total,
+        "tokens_trailer_total": trailer_tokens_total,
+        "tokens_body_overflow_total": body_overflow_total,
+        "tokens_trailer_overflow_total": trailer_overflow_total,
+        "tokens_body_budget": body_budget,
+        "tokens_trailer_budget": trailer_budget,
+        "trailer_only_retry": bool(trailer_only_retry),
+        "closed_ctrl": bool(closed_ctrl),
         "first_error": failure_codes[0] if failure_codes else None,
     }
     return telemetry
@@ -403,6 +426,18 @@ class HFChatAgent:
         failure_codes: List[str] = []
         errors: List[str] = []
         last_output = ""
+        totals: Dict[str, int] = {
+            "tokens_used_total": 0,
+            "tokens_reserved_total": 0,
+            "body_tokens_total": 0,
+            "trailer_tokens_total": 0,
+            "tokens_body_overflow_total": 0,
+            "tokens_trailer_overflow_total": 0,
+            "body_budget": 0,
+            "trailer_budget": 0,
+        }
+        pending_body: str = ""
+        trailer_only_retry = False
 
         gen_kwargs = dict(decoding)
         max_new_tokens = int(gen_kwargs.pop("max_new_tokens", 512))
@@ -424,6 +459,20 @@ class HFChatAgent:
                 **gen_kwargs,
             )
             last_output = result.text
+            trailer_only_retry = False
+
+            totals["tokens_used_total"] += max(int(result.tokens_used), 0)
+            totals["tokens_reserved_total"] += max(int(result.tokens_reserved), 0)
+            totals["body_tokens_total"] += max(int(result.body_tokens), 0)
+            totals["trailer_tokens_total"] += max(int(result.trailer_tokens), 0)
+            totals["tokens_body_overflow_total"] += max(int(result.tokens_body_overflow), 0)
+            totals["tokens_trailer_overflow_total"] += max(
+                int(result.tokens_trailer_overflow), 0
+            )
+            totals["body_budget"] = max(totals.get("body_budget", 0), int(result.body_budget))
+            totals["trailer_budget"] = max(
+                totals.get("trailer_budget", 0), int(result.trailer_budget)
+            )
 
             extraction = extract_control_trailer(last_output)
             offsets = extraction.get("offsets") or {}
@@ -439,6 +488,8 @@ class HFChatAgent:
                 error_code = extraction.get("error") or "UNKNOWN"
                 failure_codes.append(error_code)
                 errors = [_trailer_error_hint(error_code)]
+                if error_code == "ERR_TRAILER_UNCLOSED":
+                    pending_body = extraction.get("body") or pending_body
                 continue
 
             payload = dict(extraction.get("payload") or {})
@@ -453,12 +504,35 @@ class HFChatAgent:
 
             payload = dict(validation.get("payload") or {})
             body_text = extraction.get("body") or ""
+            if not body_text and pending_body:
+                body_text = pending_body
+                extraction = dict(extraction)
+                extraction["body"] = body_text
+                if extraction.get("offsets"):
+                    offsets = dict(extraction["offsets"])
+                else:
+                    offsets = {"json_start": json_start, "json_end": json_end, "suffix_at_end": True}
+                shift = len(body_text)
+                offsets["json_start"] = (offsets.get("json_start", -1) + shift) if offsets.get("json_start", -1) != -1 else -1
+                offsets["json_end"] = (offsets.get("json_end", -1) + shift) if offsets.get("json_end", -1) != -1 else -1
+                extraction["offsets"] = offsets
+                trailer_only_retry = True
+                if body_text and not last_output.startswith(body_text):
+                    last_output = f"{body_text}{last_output}"
+            pending_body = body_text
             content = dict(payload.get("content") or {})
             if body_text.strip():
                 content.setdefault("body", body_text.strip())
             payload["content"] = content
 
-            telemetry = _telemetry_from(result, extraction, failure_codes, attempt)
+            telemetry = _telemetry_from(
+                result,
+                extraction,
+                failure_codes,
+                attempt,
+                totals,
+                trailer_only_retry,
+            )
             payload["telemetry"] = telemetry
 
             envelope = envelope_from_payload(payload)
