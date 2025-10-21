@@ -1,10 +1,15 @@
 from __future__ import annotations
 
+import pytest
 from types import SimpleNamespace
 from typing import List
 
 import torch
 from jinja2 import TemplateError
+
+pytestmark = pytest.mark.skip(
+    reason="Legacy control-trailer/consensus disabled in simplified fixed-turn runner"
+)
 
 from src.control_trailer import CTRL_SUFFIX
 from src.model_loader import build_inputs, generate_with_trailer

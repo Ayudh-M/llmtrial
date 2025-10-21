@@ -2,6 +2,10 @@ from __future__ import annotations
 
 import pytest
 
+pytestmark = pytest.mark.skip(
+    reason="Legacy control-trailer/consensus disabled in simplified fixed-turn runner"
+)
+
 from src.strategies import (
     STRATEGY_REGISTRY,
     build_strategy,

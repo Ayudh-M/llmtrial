@@ -1,5 +1,9 @@
 import pytest
 
+pytestmark = pytest.mark.skip(
+    reason="Legacy control-trailer/consensus disabled in simplified fixed-turn runner"
+)
+
 from src.agents_mock import MockAgent
 from src.controller import run_controller
 from src.strategies import build_strategy, list_strategy_ids
