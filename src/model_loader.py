@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-from dataclasses import dataclass
 from typing import Any, Dict, List, Mapping, Optional, Sequence, Tuple
 
 from jinja2 import TemplateError
@@ -246,29 +245,6 @@ def _generate(
         gen_kwargs["top_k"] = int(top_k)
     gen_kwargs.update(extra)
 
-    reserve = max(int(trailer_reserved_tokens or 0), 0)
-    if reserve == 0:
-        template = "<<<CTRL{\"tag\":\"[X]\",\"status\":\"Y\",\"intent\":\"Z\"}CTRL>>>"
-        reserve = max(len(tokenizer.encode(template, add_special_tokens=False)) * 2, 32)
-
-    configured_max = int(gen_kwargs.get("max_new_tokens", 256))
-    body_budget = max(configured_max - reserve, 0)
-    target_max_new = body_budget + reserve
-    gen_kwargs["max_new_tokens"] = max(target_max_new, 1)
-    gen_kwargs.setdefault("max_length", None)
-
-    stopping_list = gen_kwargs.pop("stopping_criteria", None)
-    if stop_on_trailer:
-        trailer_stop = ControlTrailerStoppingCriteria(tokenizer)
-        if stopping_list is None:
-            stopping_list = StoppingCriteriaList([trailer_stop])
-        else:
-            if not isinstance(stopping_list, StoppingCriteriaList):
-                stopping_list = StoppingCriteriaList(list(stopping_list))
-            stopping_list.append(trailer_stop)
-    if stopping_list is not None:
-        gen_kwargs["stopping_criteria"] = stopping_list
-
     if tokenizer.pad_token_id is not None:
         gen_kwargs.setdefault("pad_token_id", tokenizer.pad_token_id)
 
@@ -277,47 +253,7 @@ def _generate(
         attention_mask=attention_mask,
         **gen_kwargs,
     )
-
-    generated = output[0]
-    input_length = input_ids.shape[-1]
-    new_token_count = max(generated.shape[-1] - input_length, 0)
-    if new_token_count:
-        generated_slice = generated[input_length:]
-        decoded = tokenizer.decode(generated_slice, skip_special_tokens=True)
-    else:
-        decoded = ""
-    eos_ids: Tuple[int, ...] = ()
-    eos_config = getattr(model.generation_config, "eos_token_id", None)
-    if isinstance(eos_config, (list, tuple)):
-        eos_ids = tuple(int(t) for t in eos_config)
-    elif isinstance(eos_config, int):
-        eos_ids = (int(eos_config),)
-
-    stop_reason = "unknown"
-    trailer_triggered = False
-    if stop_on_trailer:
-        trailer_triggered = bool(locals().get("trailer_stop") and trailer_stop.triggered)
-        if trailer_triggered:
-            stop_reason = "ctrl"
-
-    if stop_reason == "unknown" and eos_ids:
-        last_token = int(generated[-1].item())
-        if last_token in eos_ids:
-            stop_reason = "eos"
-
-    if stop_reason == "unknown" and new_token_count >= gen_kwargs["max_new_tokens"]:
-        stop_reason = "max_new_tokens"
-
-    return GenerationResult(
-        text=decoded,
-        stop_reason=stop_reason,
-        new_tokens=new_token_count,
-        input_tokens=input_length,
-        max_new_tokens=gen_kwargs["max_new_tokens"],
-        trailer_triggered=trailer_triggered,
-        body_budget=body_budget,
-        reserved_tokens=reserve,
-    )
+    return tokenizer.decode(output[0], skip_special_tokens=True)
 
 
 def generate_json_only(

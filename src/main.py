@@ -243,14 +243,6 @@ def _print_run_summary(
     else:
         print("  final_canonical=<none>")
 
-    duration_val = None
-    if isinstance(record, Mapping):
-        duration_val = record.get("duration_s")
-    if not isinstance(duration_val, (int, float)) and isinstance(result, Mapping):
-        duration_val = result.get("duration_s")
-    if isinstance(duration_val, (int, float)):
-        print(f"  duration_s={duration_val:.2f}")
-
     final_message = result.get("final_message") if isinstance(result, Mapping) else None
     if isinstance(final_message, Mapping):
         envelope = _format_envelope(final_message.get("envelope"))
@@ -270,54 +262,6 @@ def _print_run_summary(
         print(f"  final_message={description or '<none>'}")
     else:
         print("  final_message=<none>")
-
-    analytics = result.get("analytics") if isinstance(result, Mapping) else None
-    control = analytics.get("control") if isinstance(analytics, Mapping) else None
-    if isinstance(control, Mapping) and control:
-        missing = control.get("trailer_missing_ct", 0)
-        invalid = control.get("invalid_trailer_ct", 0)
-        retries = control.get("retry_count", 0)
-        first_error = control.get("first_error") or "<none>"
-        stopped = control.get("stopped_on_ctrl_ct", 0)
-        stopped_ctrl = control.get("stopped_on_ctrl", 0)
-        stopped_eos = control.get("stopped_on_eos", 0)
-        stopped_max = control.get("stopped_on_max_new_tokens", 0)
-        avg_body = control.get("avg_body_len")
-        avg_trailer = control.get("avg_trailer_len")
-        overflow_turns = control.get("overflow_turns", 0)
-        max_overflow = control.get("max_overflow")
-        needs_reserve = control.get("needs_higher_reserve")
-        first_valid = control.get("first_valid_round")
-        error_counts = control.get("error_counts") if isinstance(control.get("error_counts"), Mapping) else {}
-        parts = [
-            f"missing={missing}",
-            f"invalid={invalid}",
-            f"retries={retries}",
-            f"stopped={stopped}",
-            f"first_error={first_error}",
-        ]
-        if stopped_ctrl:
-            parts.append(f"stop_ctrl={stopped_ctrl}")
-        if stopped_eos:
-            parts.append(f"stop_eos={stopped_eos}")
-        if stopped_max:
-            parts.append(f"stop_max={stopped_max}")
-        if overflow_turns:
-            parts.append(f"overflow_turns={overflow_turns}")
-        if isinstance(max_overflow, (int, float)) and max_overflow:
-            parts.append(f"max_overflow={max_overflow}")
-        if isinstance(needs_reserve, bool) and needs_reserve:
-            parts.append("needs_higher_reserve=yes")
-        if isinstance(first_valid, int):
-            parts.append(f"first_valid_round={first_valid}")
-        if isinstance(avg_body, (int, float)):
-            parts.append(f"avg_body_len={avg_body:.1f}")
-        if isinstance(avg_trailer, (int, float)):
-            parts.append(f"avg_trailer_len={avg_trailer:.1f}")
-        if isinstance(error_counts, Mapping) and error_counts:
-            counts = ",".join(f"{k}:{v}" for k, v in error_counts.items())
-            parts.append(f"errors={counts}")
-        print("  control: " + " ".join(parts))
 
 
 def _print_transcript(transcript: Iterable[Mapping[str, Any]], agent_pair: Tuple[Any, Any]) -> None:

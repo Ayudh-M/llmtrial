@@ -1,66 +1,126 @@
 from __future__ import annotations
 
 import json
-from typing import Any, Dict, List, Mapping, Optional, Tuple
+from typing import Any, Dict, List, Mapping, Optional, Sequence, Tuple
 
 from .control_trailer import (
     CONTROL_TRAILER_GUIDE,
-    ControlTrailerFailure,
-    ControlTrailerValidation,
     envelope_from_payload,
     extract_control_trailer,
     validate_control_payload,
 )
-from .model_loader import GenerationResult, generate_json_only
+from .model_loader import generate_json_only
 from .pseudocode import augment_system_prompt
+from .sanitize import ALLOWED_STATUS, repair_envelope
 from .strategies import Strategy
-from .utils import ALLOWED_PERFORMATIVES
+from .utils import ALLOWED_PERFORMATIVES, ACLParseError, parse_acl_message
 
 
 _PERFORMATIVE_LIST = ", ".join(ALLOWED_PERFORMATIVES)
 
 TRAILER_REMINDER = (
     "Control trailer reminder:\n"
-    "- Keep the body concise so the trailer fits (reserve ~80 tokens).\n"
     "- Place a single line trailer at the end of the message in the form <<<CTRL{...}CTRL>>>.\n"
-    "- Nothing may appear after the trailer. If you need more space, say it before the trailer.\n"
     "- Include tag, status, and intent (allowed intents: "
     f"{_PERFORMATIVE_LIST}).\n"
-    "- When proposing or accepting a solution, add final_solution.canonical_text beginning with 'ANSWER: '.\n"
+    "- When proposing or accepting a solution, add final_solution.canonical_text.\n"
     "Messages without a valid trailer will be rejected."
 )
 
 BODY_PREVIEW_LIMIT = 600
 
-
-def _truncate(text: str, limit: int = BODY_PREVIEW_LIMIT) -> str:
+def _iter_json_objects(text: str) -> List[str]:
+    results: List[str] = []
     if not isinstance(text, str):
-        return ""
-    if len(text) <= limit:
-        return text
-    if limit <= 1:
-        return text[:limit]
-    return text[: limit - 1] + "…"
+        return results
+
+    depth = 0
+    start: Optional[int] = None
+    in_string = False
+    escape = False
+
+    for index, char in enumerate(text):
+        if in_string:
+            if escape:
+                escape = False
+            elif char == "\\":
+                escape = True
+            elif char == '"':
+                in_string = False
+            continue
+
+        if char == '"':
+            in_string = True
+            continue
+
+        if char == '{':
+            if depth == 0:
+                start = index
+            depth += 1
+        elif char == '}':
+            if depth:
+                depth -= 1
+                if depth == 0 and start is not None:
+                    results.append(text[start : index + 1])
+                    start = None
+
+    return results
 
 
-REASON_HINTS: Dict[str, str] = {
-    "missing_trailer": "You must finish with <<<CTRL{...}CTRL>>>.",
-    "not_at_end": "Place the trailer at the end with no extra text after CTRL>>>.",
-    "malformed_json": "Ensure the trailer JSON is valid and balanced.",
-    "missing_canonical": "Statuses READY_TO_SOLVE/PROPOSED/SOLVED require final_solution.canonical_text beginning with 'ANSWER: '.",
-    "illegal_transition": "Check tag/status/intent values against the allowed list and follow the proposer/acceptor handshake rules.",
-}
+def _extract_last_json(text: str) -> Optional[str]:
+    blocks = _iter_json_objects(text)
+    if not blocks:
+        return None
+    return blocks[-1]
 
 
-def _retry_instructions(errors: List[str], reasons: List[str]) -> str:
-    hints = [REASON_HINTS.get(code, "") for code in reasons]
-    combined = [msg for msg in (*errors, *hints) if msg]
-    bullet_list = "\n".join(f"- {msg}" for msg in combined)
+def _validate_envelope_candidate(candidate: Any) -> List[str]:
+    if not isinstance(candidate, Mapping):
+        return ["Response must be a JSON object with the expected fields."]
+
+    errors: List[str] = []
+
+    tag = candidate.get("tag")
+    if not isinstance(tag, str) or not tag.strip():
+        errors.append("Missing or empty 'tag' field.")
+
+    status = candidate.get("status")
+    if not isinstance(status, str) or status.strip().upper() not in ALLOWED_STATUS:
+        allowed = ", ".join(sorted(ALLOWED_STATUS))
+        errors.append(f"Invalid 'status'. Expected one of: {allowed}.")
+
+    content = candidate.get("content")
+    if not isinstance(content, Mapping):
+        errors.append("'content' must be an object containing an 'acl' field.")
+    else:
+        acl = content.get("acl")
+        if not isinstance(acl, str) or not acl.strip():
+            errors.append("'content.acl' must be a non-empty string following 'INTENT: message => next_action'.")
+        else:
+            try:
+                parse_acl_message(acl)
+            except ACLParseError as exc:
+                errors.append(f"Invalid ACL message: {exc}")
+
+    if "final_solution" in candidate and candidate.get("final_solution") is not None:
+        final_solution = candidate.get("final_solution")
+        if not isinstance(final_solution, Mapping):
+            errors.append("'final_solution' must be an object when provided.")
+        else:
+            canonical_text = final_solution.get("canonical_text")
+            if not isinstance(canonical_text, str) or not canonical_text.strip():
+                errors.append("'final_solution.canonical_text' must be a non-empty string when final_solution is supplied.")
+
+    return errors
+
+
+def _retry_instructions(errors: Sequence[str]) -> str:
+    bullet_list = "\n".join(f"- {msg}" for msg in errors if msg)
     details = f"\n{bullet_list}" if bullet_list else ""
     return (
-        "Your previous reply did not include a valid control trailer."
+        "Your previous reply was not a valid JSON envelope the coordinator could parse."
         f"{details}\n"
-        "Rewrite your message (body as needed) and finish with <<<CTRL{{...}}CTRL>>> including tag, status, intent, and any required final_solution.canonical_text."
+        "Return a single JSON object with tag, status, content.acl, and (if applicable) final_solution.canonical_text matching the schema."
     )
 
 
@@ -201,12 +261,6 @@ class HFChatAgent:
         preparation: Optional[Dict[str, Any]] = None,
     ) -> Tuple[Dict[str, Any], str]:
         base_messages = self._messages(task, transcript, preparation)
-        if len(base_messages) < 2:
-            raise ValueError("Expected at least system and user messages for generation.")
-
-        system_message = dict(base_messages[0])
-        user_message = dict(base_messages[1])
-        base_user_content = user_message.get("content", "")
         decoding: Dict[str, Any] = dict(self.strategy.decoding or {})
         if preparation and preparation.get("decoding_override"):
             decoding.update(preparation["decoding_override"])  # type: ignore[arg-type]
@@ -366,47 +420,53 @@ class HFChatAgent:
             fallback["content"]["errors"] = fallback_errors
             payload["errors"] = fallback_errors
 
-        telemetry = {
-            "retry_count": max_attempts - 1,
-            "first_error": failure_reasons[0] if failure_reasons else None,
-            "body_len": len(base_user_content),
-            "stop_reason": last_result.stop_reason if last_result else None,
-            "stopped_on": last_result.stop_reason if last_result else None,
-            "stopped_on_ctrl": bool(last_result.stop_reason == "ctrl") if last_result else False,
-            "new_tokens": last_result.new_tokens if last_result else None,
-            "max_new_tokens": last_result.max_new_tokens if last_result else None,
-            "input_tokens": last_result.input_tokens if last_result else None,
-            "body_budget": last_result.body_budget if last_result else None,
-            "reserved_tokens": last_result.reserved_tokens if last_result else None,
-            "trailer_triggered": last_result.trailer_triggered if last_result else None,
-            "tokens_reserved": last_result.reserved_tokens if last_result else None,
-            "tokens_used_total": last_result.new_tokens if last_result else 0,
-            "tokens_used_body": last_result.new_tokens if last_result else 0,
-            "tokens_used_trailer": 0,
-            "tokens_overflow": 0,
-            "tokens_body_overflow": 0,
-            "tokens_body_budget": last_result.body_budget if last_result else None,
-            "has_tail": False,
-        }
-        control_meta = {
-            "first_error": failure_reasons[0] if failure_reasons else None,
-            "errors": list(failure_reasons),
-            "body_preview": _truncate(base_user_content),
-            "strategy_id": self.strategy.id,
-            "strategy_name": self.strategy.name,
-            "strategy_body_style": (self.strategy.metadata or {}).get("body_style"),
-            "source": "fallback",
-            "telemetry": {
-                k: v
-                for k, v in telemetry.items()
-                if v is not None or isinstance(v, bool) or k in {"retry_count", "body_len"}
+        max_attempts = 3
+        errors: List[str] = []
+        raw_output = ""
+
+        for attempt in range(max_attempts):
+            convo: List[Dict[str, str]] = list(base_messages)
+            if attempt and errors:
+                convo.append({"role": "user", "content": _retry_instructions(errors)})
+
+            raw_output = generate_json_only(
+                self.tokenizer,
+                self.model,
+                convo,
+                decoding=decoding,
+            )
+
+            json_payload = _extract_last_json(raw_output)
+            if not json_payload:
+                errors = ["Response did not contain a JSON object."]
+                continue
+
+            try:
+                candidate = json.loads(json_payload)
+            except json.JSONDecodeError as exc:
+                errors = [
+                    f"Invalid JSON: {exc.msg} (line {exc.lineno}, column {exc.colno})."
+                ]
+                continue
+
+            errors = _validate_envelope_candidate(candidate)
+            if errors:
+                continue
+
+            envelope = repair_envelope(candidate)
+            return envelope, raw_output
+
+        fallback: Dict[str, Any] = {
+            "tag": "[CONTACT]",
+            "status": "NEED_PEER",
+            "content": {
+                "acl": "QUESTION: Unable to parse your last reply => WAIT_FOR_PEER",
             },
         }
+        if errors:
+            fallback["content"]["errors"] = list(errors)
 
-        return (
-            envelope_from_payload(payload, body=base_user_content, meta={**control_meta, "source": "fallback"}),
-            raw_output,
-        )
+        return repair_envelope(fallback), raw_output
 
 
 __all__ = ["HFChatAgent", "CONTROL_TRAILER_GUIDE"]
