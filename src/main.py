@@ -306,6 +306,7 @@ def _run_once(
         raise SystemExit("Scenario task description is empty.")
 
     agent_a, agent_b = agent_pair
+    start_time = time.time()
     result = run_controller(
         task_text,
         agent_a,
@@ -316,6 +317,9 @@ def _run_once(
         schema_validator=schema_validator,
         strategy=strategy,
     )
+    duration = time.time() - start_time
+    result = dict(result)
+    result["duration_s"] = duration
 
     roleset_path = str(scenario.get("roleset", ""))
     metadata = RunMetadata(

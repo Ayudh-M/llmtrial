@@ -10,7 +10,17 @@ def test_envelope_validation_happy():
         "status":"SOLVED",
         "tag":"[SOLVED]",
         "content": {"acl": "SOLVED: returning final answer"},
-        "final_solution":{"canonical_text":"42"}
+        "final_solution":{"canonical_text":"ANSWER: 42"}
+    }
+    ok, errs = validate_envelope(obj, SCHEMA_VALIDATOR)
+    assert ok, errs
+
+
+def test_envelope_validation_allows_plan_tag():
+    obj = {
+        "status": "PROPOSED",
+        "tag": "[PLAN]",
+        "content": {"acl": "PLAN: outline => WAIT"},
     }
     ok, errs = validate_envelope(obj, SCHEMA_VALIDATOR)
     assert ok, errs
@@ -38,6 +48,6 @@ def test_coerce_then_validate():
     assert not ok  # still missing canonical_text
     ok, errs = validate_envelope(fixed, SCHEMA)
     assert ok
-    fixed["final_solution"]["canonical_text"] = "X"
+    fixed["final_solution"]["canonical_text"] = "ANSWER: X"
     ok2, errs2 = validate_envelope(fixed, SCHEMA_VALIDATOR)
     assert ok2

@@ -10,7 +10,11 @@ from transformers import (
     AutoTokenizer,
     PreTrainedModel,
     PreTrainedTokenizer,
+    StoppingCriteria,
+    StoppingCriteriaList,
 )
+
+from .control_trailer import CTRL_SUFFIX
 
 
 TINY_REPO = "roneneldan/TinyStories-1M"
@@ -25,6 +29,44 @@ _DTYPE_ALIASES: Mapping[str, torch.dtype] = {
     "float32": torch.float32,
     "fp32": torch.float32,
 }
+
+
+class ControlTrailerStoppingCriteria(StoppingCriteria):
+    """Stop generation once the token sequence ends with the CTRL suffix."""
+
+    def __init__(self, tokenizer: PreTrainedTokenizer) -> None:
+        super().__init__()
+        self.triggered = False
+        self._suffix_tokens = tokenizer.encode(CTRL_SUFFIX, add_special_tokens=False)
+        if not self._suffix_tokens:
+            # Fallback for tokenizers that require a leading space.
+            self._suffix_tokens = tokenizer.encode(" " + CTRL_SUFFIX, add_special_tokens=False)
+
+    def __call__(self, input_ids: torch.LongTensor, scores: torch.FloatTensor, **kwargs: Any) -> bool:
+        if not self._suffix_tokens:
+            return False
+        sequence = input_ids[0].tolist()
+        suffix = self._suffix_tokens
+        if len(sequence) < len(suffix):
+            return False
+        if sequence[-len(suffix) :] == suffix:
+            self.triggered = True
+            return True
+        return False
+
+
+@dataclass
+class GenerationResult:
+    """Container for decoded text plus generation telemetry."""
+
+    text: str
+    stop_reason: str
+    new_tokens: int
+    input_tokens: int
+    max_new_tokens: int
+    trailer_triggered: bool
+    body_budget: int
+    reserved_tokens: int
 
 
 def _resolve_dtype(dtype: Optional[str]) -> Optional[torch.dtype]:
@@ -182,8 +224,10 @@ def _generate(
     do_sample: Optional[bool] = None,
     top_p: Optional[float] = None,
     top_k: Optional[int] = None,
+    stop_on_trailer: bool = True,
+    trailer_reserved_tokens: int = 80,
     **extra: Any,
-) -> str:
+) -> GenerationResult:
     if do_sample is None:
         do_sample = bool(temperature and float(temperature) > 0.0)
 
@@ -220,7 +264,7 @@ def generate_json_only(
     user_prompt: Optional[str] = None,
     decoding: Optional[Dict[str, Any]] = None,
     **legacy_kwargs: Any,
-) -> str:
+) -> GenerationResult:
     """Generate text biased toward JSON envelopes."""
 
     if isinstance(prompt_or_messages, Sequence) and prompt_or_messages and isinstance(prompt_or_messages[0], dict):
@@ -235,6 +279,9 @@ def generate_json_only(
 
     decode_cfg: Dict[str, Any] = dict(decoding or {})
     decode_cfg.update(legacy_kwargs)
+
+    decode_cfg.setdefault("trailer_reserved_tokens", 80)
+    decode_cfg.setdefault("stop_on_trailer", True)
 
     max_new_tokens = decode_cfg.pop("max_new_tokens", 256)
     temperature = decode_cfg.pop("temperature", 0.0)
@@ -255,6 +302,7 @@ __all__ = [
     "TINY_REPO",
     "TINY_TOKENIZER",
     "build_inputs",
+    "GenerationResult",
     "generate_json_only",
     "load_model_and_tokenizer",
 ]

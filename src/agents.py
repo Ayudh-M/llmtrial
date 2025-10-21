@@ -49,7 +49,7 @@ class Agent:
             {"role": "system", "content": self.system_prompt},
             {"role": "user", "content": user_prompt},
         ]
-        raw = generate_json_only(
+        result = generate_json_only(
             self.tok,
             self.model,
             messages,
@@ -58,8 +58,8 @@ class Agent:
             temperature=0.7 if not self.cfg.greedy else 0.0,
             top_p=0.95 if not self.cfg.greedy else None,
         )
-        obj, err = parse_envelope(raw)
-        return obj, raw
+        obj, err = parse_envelope(result.text)
+        return obj, result.text
 
     def step(self, task: str, transcript: List[Dict[str, Any]]) -> Tuple[Dict[str,Any], str]:
         user_prompt = self._build_user_prompt(task, transcript)

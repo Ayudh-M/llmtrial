@@ -69,28 +69,23 @@ def repair_envelope(env: Dict[str, Any]) -> Dict[str, Any]:
         canonical_text = str(raw_value) if raw_value is not None else ""
 
     normalised_tag = raw_tag.strip().upper()
-    final_hint = _tag_hint(raw_tag)
     canonical_trimmed = canonical_text.strip()
     canonical_upper = canonical_trimmed.upper() if canonical_trimmed else ""
     stage_like = canonical_upper in NON_SOLVED_FINALS
+    tag_hint = _tag_hint(raw_tag)
 
-    should_mark_solved = bool(
-        final_hint is True and not stage_like
-    )
-
-    tag_matches_pattern = bool(TAG_PATTERN.fullmatch(normalised_tag))
-
-    if should_mark_solved:
-        target_tag = "[SOLVED]"
-    elif final_hint is True and stage_like:
+    if tag_hint is True and stage_like:
         target_tag = "[CONTACT]"
-    elif tag_matches_pattern:
+    elif TAG_PATTERN.fullmatch(normalised_tag):
         target_tag = normalised_tag
+    elif canonical_trimmed and not stage_like:
+        target_tag = "[SOLVED]"
     else:
-        target_tag = "[SOLVED]" if canonical_text and not stage_like else "[CONTACT]"
+        target_tag = "[CONTACT]"
+
     fixed["tag"] = target_tag
 
-    downgraded_from_solved = final_hint is True and target_tag != "[SOLVED]"
+    downgraded_from_solved = tag_hint is True and target_tag != "[SOLVED]"
 
     if target_tag == "[SOLVED]":
         fixed["status"] = "SOLVED"

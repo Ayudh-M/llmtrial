@@ -1,12 +1,16 @@
 import pytest
 
-from src.controller import run_controller
+from src.controller import (
+    HandshakeTracker,
+    _control_summary,
+    _handle_handshake_event,
+    _update_control_stats,
+    run_controller,
+)
 from src.agents_mock import MockAgent, ConciseTextAgent
-from src.strategies import build_strategy
-import pytest
-
-from src.agents_mock import MockAgent
 from src.dsl import default_dsl_spec
+from src.schemas import Envelope, get_envelope_validator
+from src.strategies import Strategy, build_strategy
 
 def test_mock_consensus():
     spec = default_dsl_spec()
@@ -20,7 +24,6 @@ def test_mock_consensus():
     assert out["final_message"]["dsl"]["canonical_text"] == "TRUE"
     assert out["final_message"]["actor"] == "b"
     assert out["dsl_trace"] and out["dsl_trace"][-1]["status"] == "SOLVED"
-from src.schemas import get_envelope_validator
 from src.strategies import Strategy
 
 
@@ -185,3 +188,109 @@ def test_no_consensus_when_solutions_differ():
     intents = out["analytics"]["intent_counts"]
     assert intents["a"].get("SOLVED", 0) >= 1
     assert intents["b"].get("SOLVED", 0) >= 1
+
+
+def _make_envelope(tag: str, status: str, canonical: str) -> Envelope:
+    return Envelope(tag=tag, status=status, content={}, final_solution={"canonical_text": canonical})
+
+
+def test_handshake_accepts_normalised_canonical_match():
+    proposer = _make_envelope("[SOLVER]", "READY_TO_SOLVE", "ANSWER: 60")
+    acceptor = _make_envelope("[SOLVED]", "SOLVED", "ANSWER: 60.0")
+    tracker = HandshakeTracker()
+    proposal_event = tracker.observe("a", proposer, 1)
+    assert proposal_event and proposal_event["kind"] == "proposal"
+    acceptance = tracker.observe("b", acceptor, 1)
+    assert acceptance and acceptance["kind"] == "accepted"
+    assert acceptance["canonical"] == "ANSWER: 60"
+
+
+def test_handshake_rejects_mismatched_canonical():
+    proposer = _make_envelope("[SOLVER]", "READY_TO_SOLVE", "ANSWER: 60")
+    acceptor = _make_envelope("[SOLVED]", "SOLVED", "ANSWER: 61")
+    tracker = HandshakeTracker()
+    tracker.observe("a", proposer, 1)
+    acceptance = tracker.observe("b", acceptor, 1)
+    assert acceptance and acceptance["kind"] == "error"
+    assert acceptance["error"] == "illegal_transition"
+
+
+def test_handshake_requires_valid_proposer_status():
+    proposer = _make_envelope("[SOLVER]", "NEED_PEER", "ANSWER: 60")
+    acceptor = _make_envelope("[SOLVED]", "SOLVED", "ANSWER: 60")
+    tracker = HandshakeTracker()
+    proposal = tracker.observe("a", proposer, 1)
+    assert proposal and proposal["kind"] == "error"
+    assert proposal["error"] == "illegal_transition"
+
+
+def test_handle_handshake_event_records_errors():
+    stats = {"trailer_missing_ct": 0, "invalid_trailer_ct": 0, "retry_count": 0, "first_error": None, "error_log": []}
+    error_event = {"kind": "error", "error": "missing_trailer", "round": 2, "actor": "a"}
+    accepted = _handle_handshake_event(stats, error_event)
+    assert accepted is None
+    assert stats["trailer_missing_ct"] == 1
+    assert stats["handshake_error_ct"] == 1
+    assert "missing_trailer" in stats["error_log"]
+
+    accepted_event = {"kind": "accepted", "canonical": "ANSWER: 5", "actor": "b", "round": 2}
+    result = _handle_handshake_event(stats, accepted_event)
+    assert result is accepted_event
+
+
+def test_control_stats_summary_tracks_overflow_and_stop_reasons():
+    stats = {"trailer_missing_ct": 0, "invalid_trailer_ct": 0, "retry_count": 0, "first_error": None, "error_log": []}
+    telemetry = {
+        "retry_count": 0,
+        "body_len": 10,
+        "trailer_len": 42,
+        "stopped_on": "ctrl",
+        "stopped_on_ctrl": True,
+        "tokens_reserved": 16,
+        "tokens_used_trailer": 20,
+        "tokens_used_body": 12,
+        "tokens_overflow": 4,
+        "tokens_used_total": 32,
+        "has_tail": False,
+        "trailer_start": 5,
+        "trailer_end": 47,
+    }
+    env = Envelope(
+        tag="[SOLVER]",
+        status="READY_TO_SOLVE",
+        content={"control": {"telemetry": telemetry}},
+        final_solution={"canonical_text": "ANSWER: 5"},
+    )
+
+    _update_control_stats(stats, env, 1)
+
+    telemetry_max = {
+        "retry_count": 0,
+        "body_len": 5,
+        "trailer_len": 30,
+        "stopped_on": "max_new_tokens",
+        "stopped_on_ctrl": False,
+        "tokens_reserved": 16,
+        "tokens_used_trailer": 10,
+        "tokens_used_body": 22,
+        "tokens_overflow": 0,
+        "tokens_used_total": 32,
+        "has_tail": False,
+        "trailer_start": 3,
+        "trailer_end": 33,
+    }
+    env_max = Envelope(
+        tag="[PLAN]",
+        status="PROPOSED",
+        content={"control": {"telemetry": telemetry_max}},
+    )
+
+    _update_control_stats(stats, env_max, 2)
+
+    summary = _control_summary(stats)
+    assert summary["overflow_turns"] == 1
+    assert summary["max_overflow"] == 4
+    assert summary["stopped_on_ctrl"] == 1
+    assert summary["stopped_on_max_new_tokens"] == 1
+    assert summary["needs_higher_reserve"] is True
+    assert summary["tokens_used_trailer_total"] == 30
