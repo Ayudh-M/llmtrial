@@ -95,11 +95,11 @@ def _load_models(
     dtype: Optional[str],
 ) -> Tuple[Tuple[Any, Any], Tuple[Any, Any]]:
     if model_a == model_b:
-        tokenizer, model = load_model_and_tokenizer(model_a, dtype=dtype)
+        model, tokenizer = load_model_and_tokenizer(model_a, dtype=dtype)
         return (tokenizer, model), (tokenizer, model)
 
-    tok_a, mdl_a = load_model_and_tokenizer(model_a, dtype=dtype)
-    tok_b, mdl_b = load_model_and_tokenizer(model_b, dtype=dtype)
+    mdl_a, tok_a = load_model_and_tokenizer(model_a, dtype=dtype)
+    mdl_b, tok_b = load_model_and_tokenizer(model_b, dtype=dtype)
     return (tok_a, mdl_a), (tok_b, mdl_b)
 
 
