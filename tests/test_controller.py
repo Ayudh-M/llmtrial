@@ -244,7 +244,7 @@ def test_control_stats_summary_tracks_overflow_and_stop_reasons():
         "retry_count": 0,
         "body_len": 10,
         "trailer_len": 42,
-        "stopped_on": "suffix",
+        "stopped_on": "ctrl_suffix",
         "stopped_on_ctrl": True,
         "tokens_reserved": 16,
         "tokens_used_trailer": 20,

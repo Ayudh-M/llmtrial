@@ -448,6 +448,20 @@ class HFChatAgent:
         trailer_only_retry = False
 
         gen_kwargs = dict(decoding)
+        max_new_tokens = int(gen_kwargs.pop("max_new_tokens", 512))
+        do_sample = bool(gen_kwargs.pop("do_sample", False))
+        temperature = gen_kwargs.pop("temperature", None)
+        top_p = gen_kwargs.pop("top_p", None)
+        top_k = gen_kwargs.pop("top_k", None)
+
+        sampling_kwargs: Dict[str, Any] = {}
+        if do_sample:
+            if temperature is not None:
+                sampling_kwargs["temperature"] = float(temperature)
+            if top_p is not None:
+                sampling_kwargs["top_p"] = float(top_p)
+            if top_k is not None:
+                sampling_kwargs["top_k"] = int(top_k)
 
         for attempt in range(max_attempts):
             if attempt and errors:
@@ -460,6 +474,9 @@ class HFChatAgent:
                 self.model,
                 self.tokenizer,
                 convo,
+                max_new_tokens=max_new_tokens,
+                do_sample=do_sample,
+                **sampling_kwargs,
                 **gen_kwargs,
             )
             last_output = result.text
