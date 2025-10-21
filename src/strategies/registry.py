@@ -226,6 +226,18 @@ def _decorate_with_guidance(message: str) -> PromptDecorator:
     return _decorate
 
 
+def _decorate_with_control_hint(prompt: str, context: Mapping[str, Any]) -> str:
+    if context.get("control_hint_applied"):
+        return prompt
+    suffix = (
+        "\n\nRemember: respond in free-form text, then append exactly one <<<CTRL{...}CTRL>>> trailer "
+        "as the final characters of your reply."
+    )
+    context = dict(context)
+    context["control_hint_applied"] = True
+    return prompt + suffix
+
+
 def _set_controller_strategy_id(strategy_id: str) -> ControllerBehavior:
     def _apply(state: MutableMapping[str, Any]) -> None:
         state.setdefault("meta", {})["strategy_id"] = strategy_id
@@ -235,6 +247,15 @@ def _set_controller_strategy_id(strategy_id: str) -> ControllerBehavior:
 
 def _toggle_json_mode(state: MutableMapping[str, Any]) -> None:
     state.setdefault("meta", {})["json_only"] = True
+
+
+def _set_body_style_meta(style: str) -> ControllerBehavior:
+    def _apply(state: MutableMapping[str, Any]) -> None:
+        meta = state.setdefault("meta", {})
+        meta["body_style"] = style
+        meta["json_only"] = False
+
+    return _apply
 
 
 # --- Registry ----------------------------------------------------------------
@@ -249,16 +270,21 @@ def register_strategy(definition: StrategyDefinition) -> None:
 register_strategy(
     StrategyDefinition(
         id="S1",
-        name="strict_json",
-        description="Deterministic JSON-only handshake with review consensus.",
-        json_only=True,
+        name="control_trailer",
+        description="Free-form dialogue with mandatory control trailer handoff.",
+        json_only=False,
         allow_cot=False,
         max_rounds=8,
         decoding={
-            "do_sample": False,
-            "temperature": 0.0,
-            "top_p": 1.0,
-            "max_new_tokens": 256,
+            "do_sample": True,
+            "temperature": 0.7,
+            "top_p": 0.9,
+            "repetition_penalty": 1.05,
+            "body_budget": 192,
+            "trailer_budget": 96,
+            "max_new_tokens": 288,
+            "min_new_tokens": 64,
+            "salvage_max_new_tokens": 128,
         },
         consensus_mode="review_handshake",
         pre_round_hooks=(_set_controller_strategy_id("S1"),),
@@ -267,15 +293,15 @@ register_strategy(
             _ensure_tag,
         ),
         prompt_decorators=(
-            _decorate_with_json_hint,
+            _decorate_with_control_hint,
         ),
         controller_behaviors=(
-            _toggle_json_mode,
+            _set_body_style_meta("control"),
         ),
-        agent_profile=AgentProfile(greedy=True, k_samples=1, max_new_tokens=256),
+        agent_profile=AgentProfile(greedy=False, k_samples=1, max_new_tokens=288),
         metadata={
-            "title": "Baseline strict JSON negotiation",
-            "body_style": "json",
+            "title": "Control trailer negotiation",
+            "body_style": "control",
         },
     )
 )
@@ -467,6 +493,9 @@ register_strategy(
 )
 
 
+REGISTRY = STRATEGY_REGISTRY
+
+
 __all__ = [
     "AgentProfile",
     "ControllerBehavior",
@@ -476,5 +505,6 @@ __all__ = [
     "Strategy",
     "StrategyDefinition",
     "STRATEGY_REGISTRY",
+    "REGISTRY",
     "register_strategy",
 ]

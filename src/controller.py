@@ -252,7 +252,7 @@ def _update_control_stats(stats: Dict[str, Any], env: Envelope, round_idx: int) 
 
     if isinstance(stop_reason, str):
         normalized = stop_reason.lower()
-        if normalized in {"ctrl", "suffix"}:
+        if normalized in {"ctrl", "suffix", "ctrl_suffix"}:
             key = "suffix"
             if not isinstance(stopped_on_ctrl, bool) or not stopped_on_ctrl:
                 stats["stopped_on_ctrl_ct"] = stats.get("stopped_on_ctrl_ct", 0) + 1
