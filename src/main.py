@@ -335,9 +335,9 @@ def _run_once(
     return result, record
 
 
-def main(argv: Optional[Sequence[str]] = None) -> None:
+def _build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description="Two-agent orchestration runner")
-    parser.add_argument("--scenario", required=True, help="Scenario id from prompts/registry.yaml")
+    parser.add_argument("--scenario", help="Scenario id from prompts/registry.yaml")
     parser.add_argument("--strategy", help="Override strategy id (default uses scenario entry)")
     parser.add_argument(
         "--all-strategies",
@@ -355,12 +355,73 @@ def main(argv: Optional[Sequence[str]] = None) -> None:
         action="store_true",
         help="Print a compact transcript summary after each run",
     )
+    matrix = parser.add_argument_group("matrix compatibility")
+    matrix.add_argument("--pair", help="Roleset/pair identifier from matrix tasks")
+    matrix.add_argument("--language", help="Strategy/language identifier from matrix tasks")
+    matrix.add_argument("--dataset", help="Dataset/task identifier from matrix tasks")
+    matrix.add_argument("--rep", type=int, default=0, help="Repetition index from matrix tasks")
+    matrix.add_argument(
+        "--simple",
+        action="store_true",
+        help="Compatibility flag; adjusts default log locations when used with --logdir.",
+    )
+    matrix.add_argument(
+        "--logdir",
+        help="Base directory for logs when invoked by the matrix runner",
+    )
+    return parser
+
+
+def _resolve_scenario_argument(
+    parser: argparse.ArgumentParser, args: argparse.Namespace
+) -> str:
+    if args.scenario:
+        return args.scenario
+
+    matrix_fields = [
+        ("--pair", args.pair),
+        ("--language", args.language),
+        ("--dataset", args.dataset),
+    ]
+    missing = [name for name, value in matrix_fields if not value]
+    if missing:
+        formatted = ", ".join(missing)
+        if len(missing) == len(matrix_fields):
+            parser.error("--scenario is required when matrix arguments are omitted.")
+        parser.error(
+            "the following arguments are required when --scenario is omitted: "
+            f"{formatted}"
+        )
+
+    rep = args.rep if args.rep is not None else 0
+    scenario_id = f"{args.dataset}:{args.language}:{args.pair}:rep={rep}"
+    args.scenario = scenario_id
+    return scenario_id
+
+
+def _resolve_log_paths(args: argparse.Namespace) -> Tuple[Path, Path]:
+    csv_path = Path(args.csv_log)
+    jsonl_path = Path(args.jsonl_log)
+    if args.logdir:
+        base = Path(args.logdir)
+        base.mkdir(parents=True, exist_ok=True)
+        if args.csv_log == str(DEFAULT_CSV):
+            csv_path = base / "runs.csv"
+        if args.jsonl_log == str(DEFAULT_JSONL):
+            jsonl_path = base / "runs.jsonl"
+    return csv_path, jsonl_path
+
+
+def main(argv: Optional[Sequence[str]] = None) -> None:
+    parser = _build_parser()
     args = parser.parse_args(argv)
 
+    scenario_id = _resolve_scenario_argument(parser, args)
+
     try:
-        scenario = get_scenario(args.scenario)
+        scenario = get_scenario(scenario_id)
     except Exception as exc:  # pragma: no cover - configuration errors
-        print(f"[error] Failed to load scenario '{args.scenario}': {exc}", file=sys.stderr)
+        print(f"[error] Failed to load scenario '{scenario_id}': {exc}", file=sys.stderr)
         raise SystemExit(2) from exc
 
     strategy_ids = _resolve_strategy_ids(args, scenario)
@@ -396,8 +457,7 @@ def main(argv: Optional[Sequence[str]] = None) -> None:
         tokenizer_pair = (tok_a, tok_b)
         model_pair = (mdl_a, mdl_b)
 
-    csv_path = Path(args.csv_log)
-    jsonl_path = Path(args.jsonl_log)
+    csv_path, jsonl_path = _resolve_log_paths(args)
 
     results: List[Tuple[str, Dict[str, Any]]] = []
     for strategy_id in strategy_ids:
@@ -410,7 +470,7 @@ def main(argv: Optional[Sequence[str]] = None) -> None:
             agent_pair = _build_agents(roleset, tokenizer_pair, model_pair, strategy)
 
         result, record = _run_once(
-            args.scenario,
+            scenario_id,
             scenario,
             strategy_id,
             roleset=roleset,
@@ -426,7 +486,7 @@ def main(argv: Optional[Sequence[str]] = None) -> None:
             extra_meta={"task_kind": task_kind},
         )
 
-        out_name = f"{_timestamp()}_{args.scenario}_{strategy_id}.json"
+        out_name = f"{_timestamp()}_{scenario_id}_{strategy_id}.json"
         out_path = RUNS_DIR / out_name
         out_path.write_text(_dump_json(result), encoding="utf-8")
 
