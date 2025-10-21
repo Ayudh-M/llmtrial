@@ -177,7 +177,11 @@ def _update_control_stats(stats: Dict[str, Any], env: Envelope, round_idx: int) 
         tokens_overflow = telemetry.get("tokens_overflow")
         tokens_body_budget = telemetry.get("tokens_body_budget") or telemetry.get("body_budget")
         tokens_body_overflow = telemetry.get("tokens_body_overflow")
-        tokens_used_total = telemetry.get("tokens_used_total") or telemetry.get("new_tokens")
+        tokens_used_total = (
+            telemetry.get("tokens_used_total")
+            or telemetry.get("tokens_used")
+            or telemetry.get("new_tokens")
+        )
         has_tail = telemetry.get("has_tail")
         trailer_start = telemetry.get("trailer_start")
         trailer_end = telemetry.get("trailer_end")
@@ -244,13 +248,23 @@ def _update_control_stats(stats: Dict[str, Any], env: Envelope, round_idx: int) 
     if isinstance(stopped_on_ctrl, bool) and stopped_on_ctrl:
         stats["stopped_on_ctrl_ct"] = stats.get("stopped_on_ctrl_ct", 0) + 1
 
-    if isinstance(stop_reason, str) and stop_reason in {"ctrl", "eos", "max_new_tokens"}:
-        stop_counts = stats.setdefault("stop_reasons", {})
-        stop_counts[stop_reason] = stop_counts.get(stop_reason, 0) + 1
-        if stop_reason == "ctrl":
-            stats["stopped_on_ctrl_ct"] = stats.get("stopped_on_ctrl_ct", 0) + 1
-        if stop_reason == "max_new_tokens":
+    if isinstance(stop_reason, str):
+        normalized = stop_reason.lower()
+        if normalized in {"ctrl", "suffix"}:
+            key = "suffix"
+            if not isinstance(stopped_on_ctrl, bool) or not stopped_on_ctrl:
+                stats["stopped_on_ctrl_ct"] = stats.get("stopped_on_ctrl_ct", 0) + 1
+        elif normalized == "eos":
+            key = "eos"
+        elif normalized in {"length", "max_new_tokens"}:
+            key = "max_new_tokens"
             stats["needs_higher_reserve"] = True
+        else:
+            key = None
+
+        if key:
+            stop_counts = stats.setdefault("stop_reasons", {})
+            stop_counts[key] = stop_counts.get(key, 0) + 1
 
     if env.final_solution and env.status in {"PROPOSED", "READY_TO_SOLVE"}:
         stats.setdefault("first_valid_round", round_idx)
@@ -275,6 +289,7 @@ def _control_summary(stats: Dict[str, Any]) -> Dict[str, Any]:
         summary["error_log"] = list(stats["error_log"])
     if stats.get("stopped_on_ctrl_ct"):
         summary["stopped_on_ctrl_ct"] = stats["stopped_on_ctrl_ct"]
+        summary.setdefault("stopped_on_ctrl", stats["stopped_on_ctrl_ct"])
     if stats.get("handshake_error_ct"):
         summary["handshake_error_ct"] = stats["handshake_error_ct"]
     if stats.get("legacy_turns"):
