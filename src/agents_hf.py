@@ -12,12 +12,7 @@ from .control_trailer import (
     extract_control_trailer,
     validate_control_payload,
 )
-from .model_loader import (
-    GenerationResult,
-    estimate_trailer_token_budget,
-    generate_json_only,
-    generate_with_trailer,
-)
+from .model_loader import GenerationResult, generate_json_only, generate_with_trailer
 from .pseudocode import augment_system_prompt
 from .sanitize import ALLOWED_STATUS, repair_envelope
 from .strategies import Strategy
@@ -162,8 +157,6 @@ def _telemetry_from(
     extraction: Dict[str, Any],
     failure_codes: Sequence[str],
     attempt: int,
-    *,
-    trailer_only: bool = False,
 ) -> Dict[str, Any]:
     offsets = extraction.get("offsets") or {}
     json_start = offsets.get("json_start", -1)
@@ -173,8 +166,6 @@ def _telemetry_from(
     trailer_len = max(json_end - json_start, 0)
     trailer_start = json_start - len(CTRL_PREFIX) if json_start >= 0 else -1
     trailer_end = json_end + len(CTRL_SUFFIX) if json_end >= 0 else -1
-    has_ctrl = CTRL_PREFIX in (result.text or "")
-    trailer_complete = suffix_at_end and not result.has_tail
     telemetry = {
         "retry_count": attempt,
         "error_log": list(failure_codes),
@@ -192,21 +183,7 @@ def _telemetry_from(
         "stopped_on_ctrl": result.stop_reason == "suffix" and suffix_at_end,
         "tokens_used_total": result.tokens_used,
         "first_error": failure_codes[0] if failure_codes else None,
-        "tokens_reserved": result.tokens_reserved or result.max_new_tokens,
-        "tokens_body_budget": result.body_budget or None,
-        "tokens_trailer_budget": result.trailer_budget or None,
-        "tokens_used_body": result.body_tokens or None,
-        "tokens_used_trailer": result.trailer_tokens or None,
-        "tokens_body_overflow": result.tokens_body_overflow or None,
-        "tokens_trailer_overflow": result.tokens_trailer_overflow or None,
-        "suffix_triggered": result.suffix_triggered,
-        "trailer_only_retry": bool(trailer_only),
-        "trailer_complete": trailer_complete,
-        "has_ctrl": has_ctrl,
     }
-    if not telemetry["trailer_only_retry"]:
-        telemetry.pop("trailer_only_retry", None)
-    telemetry["closed_ctrl"] = bool(trailer_complete)
     return telemetry
 
 
@@ -428,19 +405,8 @@ class HFChatAgent:
         last_output = ""
 
         gen_kwargs = dict(decoding)
-        body_budget = int(gen_kwargs.pop("max_new_tokens", 256))
-        trailer_margin = int(gen_kwargs.pop("trailer_margin", 64))
-        trailer_budget_cap = int(gen_kwargs.pop("trailer_budget_cap", 512))
-        trailer_retry_increment = int(gen_kwargs.pop("trailer_retry_increment", 64))
+        max_new_tokens = int(gen_kwargs.pop("max_new_tokens", 512))
         do_sample = bool(gen_kwargs.pop("do_sample", False))
-        if not do_sample:
-            gen_kwargs.pop("temperature", None)
-            gen_kwargs.pop("top_p", None)
-            gen_kwargs.pop("top_k", None)
-
-        base_trailer_budget = estimate_trailer_token_budget(self.tokenizer, margin=trailer_margin)
-        trailer_budget_cap = max(trailer_budget_cap, base_trailer_budget)
-        body_budget = max(body_budget, 0)
 
         for attempt in range(max_attempts):
             if attempt and errors:
@@ -449,55 +415,17 @@ class HFChatAgent:
             else:
                 convo = [dict(system_message), dict(user_message)]
 
-            current_trailer_budget = min(
-                base_trailer_budget + attempt * trailer_retry_increment,
-                trailer_budget_cap,
-            )
-
             result = generate_with_trailer(
                 self.model,
                 self.tokenizer,
                 convo,
-                body_token_budget=body_budget,
-                trailer_token_budget=current_trailer_budget,
+                max_new_tokens=max_new_tokens,
                 do_sample=do_sample,
                 **gen_kwargs,
             )
             last_output = result.text
 
             extraction = extract_control_trailer(last_output)
-            salvage_attempted = False
-            if not extraction.get("ok"):
-                error_code = extraction.get("error") or "UNKNOWN"
-                if (
-                    error_code == "ERR_TRAILER_UNCLOSED"
-                    and CTRL_PREFIX in last_output
-                ):
-                    salvage_attempted = True
-                    failure_codes.append(error_code)
-                    prefix_idx = last_output.rfind(CTRL_PREFIX)
-                    body_text = last_output[:prefix_idx] if prefix_idx != -1 else last_output
-                    combined = self._trailer_only_completion(
-                        system_message,
-                        body_text,
-                        gen_kwargs,
-                        do_sample,
-                        current_trailer_budget,
-                        result,
-                    )
-                    result = combined
-                    last_output = combined.text
-                    extraction = extract_control_trailer(last_output)
-                    if not extraction.get("ok"):
-                        error_code = extraction.get("error") or "ERR_TRAILER_UNCLOSED"
-                        errors = [_trailer_error_hint(error_code)]
-                        continue
-                    errors = []
-                else:
-                    failure_codes.append(error_code)
-                    errors = [_trailer_error_hint(error_code)]
-                    continue
-
             offsets = extraction.get("offsets") or {}
             json_start = offsets.get("json_start", -1)
             json_end = offsets.get("json_end", -1)
@@ -530,13 +458,7 @@ class HFChatAgent:
                 content.setdefault("body", body_text.strip())
             payload["content"] = content
 
-            telemetry = _telemetry_from(
-                result,
-                extraction,
-                failure_codes,
-                attempt,
-                trailer_only=salvage_attempted,
-            )
+            telemetry = _telemetry_from(result, extraction, failure_codes, attempt)
             payload["telemetry"] = telemetry
 
             envelope = envelope_from_payload(payload)
@@ -566,77 +488,6 @@ class HFChatAgent:
             },
         }
         return repair_envelope(fallback), last_output
-
-    def _trailer_only_completion(
-        self,
-        system_message: Mapping[str, Any],
-        body_text: str,
-        decoding_kwargs: Mapping[str, Any],
-        do_sample: bool,
-        trailer_budget: int,
-        base_result: GenerationResult,
-    ) -> GenerationResult:
-        base_body = body_text
-        candidate = base_result.text
-        if isinstance(candidate, str):
-            idx = candidate.rfind(CTRL_PREFIX)
-            if idx != -1:
-                base_body = candidate[:idx]
-            elif not base_body:
-                base_body = candidate
-
-        guidance_lines = [
-            "You already produced the message body shown below.",
-            "Output only the control trailer that matches envelope.schema.json.",
-            "Start with <<<CTRL and end with CTRL>>>.",
-            "Do not repeat the body or add any commentary.",
-        ]
-        body_section = base_body if base_body else ""
-        instruction = "\n".join(guidance_lines)
-        if body_section:
-            instruction = f"{instruction}\n\nBody:\n{body_section}"
-
-        convo = [dict(system_message), {"role": "user", "content": instruction}]
-        retry_kwargs = dict(decoding_kwargs)
-        retry = generate_with_trailer(
-            self.model,
-            self.tokenizer,
-            convo,
-            body_token_budget=0,
-            trailer_token_budget=trailer_budget,
-            do_sample=do_sample,
-            **retry_kwargs,
-        )
-
-        combined_text = f"{body_section}{retry.text}"
-        trimmed = combined_text.rstrip()
-        suffix_ok = trimmed.endswith(CTRL_SUFFIX) and trimmed == combined_text
-        prefix_idx = combined_text.rfind(CTRL_PREFIX)
-        trailer_offset = -1
-        if suffix_ok and prefix_idx != -1:
-            trailer_offset = prefix_idx + len(CTRL_PREFIX)
-
-        combined_reserved = base_result.tokens_reserved + retry.tokens_reserved
-        combined = replace(
-            retry,
-            text=combined_text,
-            stop_reason=retry.stop_reason,
-            tokens_used=base_result.tokens_used + retry.tokens_used,
-            overflow_tokens=base_result.overflow_tokens + retry.overflow_tokens,
-            has_tail=not suffix_ok,
-            trailer_offset=trailer_offset,
-            input_tokens=base_result.input_tokens,
-            max_new_tokens=base_result.max_new_tokens + retry.max_new_tokens,
-            body_budget=base_result.body_budget,
-            trailer_budget=max(base_result.trailer_budget, retry.trailer_budget),
-            tokens_reserved=combined_reserved,
-            body_tokens=base_result.body_tokens,
-            trailer_tokens=retry.trailer_tokens or retry.tokens_used,
-            tokens_body_overflow=base_result.tokens_body_overflow,
-            tokens_trailer_overflow=retry.tokens_trailer_overflow,
-            suffix_triggered=retry.suffix_triggered or base_result.suffix_triggered,
-        )
-        return combined
 
 
 __all__ = ["HFChatAgent", "CONTROL_TRAILER_GUIDE"]
