@@ -22,6 +22,7 @@ TINY_REPO = "roneneldan/TinyStories-1M"
 TINY_TOKENIZER = "EleutherAI/gpt-neo-125M"
 
 
+TRAILER_TEMPLATE = '<<<CTRL{"tag":"","status":"","content":{},"final_solution":{}}CTRL>>>'
 TRAILER_RESERVE_FRACTION = 0.25
 
 
@@ -73,6 +74,46 @@ def _safe_token_length(tokenizer: PreTrainedTokenizer, text: str) -> int:
     if hasattr(tokens, "__len__"):
         return len(tokens)  # type: ignore[arg-type]
     return 0
+
+
+def _safe_token_length(tokenizer: PreTrainedTokenizer, text: str) -> int:
+    if not text:
+        return 0
+    try:
+        tokens = tokenizer.encode(text, add_special_tokens=False)
+    except TypeError:
+        tokens = tokenizer.encode(text)
+    except Exception:
+        tokens = None
+    if tokens is None:
+        stripped = text.strip()
+        return len(stripped.split()) if stripped else 0
+    if hasattr(tokens, "input_ids") and hasattr(tokens.input_ids, "__len__"):
+        return len(tokens.input_ids)  # type: ignore[arg-type]
+    if hasattr(tokens, "__len__"):
+        return len(tokens)  # type: ignore[arg-type]
+    return 0
+
+
+def _estimate_trailer_budget(tokenizer: PreTrainedTokenizer, max_new_tokens: int) -> int:
+    if max_new_tokens <= 0:
+        return 0
+    try:
+        template_tokens = tokenizer.encode(TRAILER_TEMPLATE, add_special_tokens=False)
+    except TypeError:
+        template_tokens = tokenizer.encode(TRAILER_TEMPLATE)
+    except Exception:
+        template_tokens = None
+    if hasattr(template_tokens, "__len__"):
+        template_len = len(template_tokens)  # type: ignore[arg-type]
+    else:
+        template_len = 0
+    if template_len <= 0:
+        template_len = max(len(TRAILER_TEMPLATE) // 4, 1)
+
+    fractional_reserve = max(int(max_new_tokens * TRAILER_RESERVE_FRACTION), 0)
+    trailer_budget = max(template_len, fractional_reserve)
+    return min(max_new_tokens, trailer_budget)
 
 
 @dataclass
@@ -324,6 +365,7 @@ def generate_with_trailer(
     attention_mask = torch.ones_like(input_ids)
     stopper = SuffixStop(tokenizer, CTRL_SUFFIX)
     stopping = StoppingCriteriaList([stopper])
+    stopper.set_input_length(int(input_ids.shape[-1]))
 
     pad_token_id = tokenizer.pad_token_id or tokenizer.eos_token_id
     eos_token_id = tokenizer.eos_token_id
@@ -331,77 +373,33 @@ def generate_with_trailer(
     if eos_token_id is not None:
         bad_words_ids = [[int(eos_token_id)]]
 
-    generation_args: Dict[str, Any] = {
-        "input_ids": input_ids,
-        "attention_mask": attention_mask,
-        "max_new_tokens": max_new_tokens,
-        "min_new_tokens": min_new_tokens,
-        "do_sample": do_sample,
-        "repetition_penalty": repetition_penalty,
-        "stopping_criteria": stopping,
-        "pad_token_id": pad_token_id,
-    }
-
+    sampling_kwargs: Dict[str, Any] = {}
+    temperature = generate_kwargs.pop("temperature", None)
+    top_p = generate_kwargs.pop("top_p", None)
+    top_k = generate_kwargs.pop("top_k", None)
     if do_sample:
-        generation_args["temperature"] = temperature
-        generation_args["top_p"] = top_p
+        if temperature is not None:
+            sampling_kwargs["temperature"] = float(temperature)
+        if top_p is not None:
+            sampling_kwargs["top_p"] = float(top_p)
         if top_k is not None:
-            generation_args["top_k"] = int(top_k)
-    elif top_k is not None:
-        generation_args["top_k"] = int(top_k)
+            sampling_kwargs["top_k"] = int(top_k)
 
-    if bad_words_ids is not None:
-        generation_args["bad_words_ids"] = bad_words_ids
-
-    generation_args.update(params)
-
-    generated = model.generate(**generation_args)
+    generated = model.generate(
+        input_ids=input_ids,
+        attention_mask=attention_mask,
+        max_new_tokens=int(max_new_tokens),
+        do_sample=bool(do_sample),
+        stopping_criteria=stopping,
+        pad_token_id=pad_token_id,
+        eos_token_id=eos_token_id,
+        **sampling_kwargs,
+        **generate_kwargs,
+    )
 
     gen_tokens = generated[0][input_ids.shape[-1] :]
+    eos_hit = bool(len(gen_tokens) and eos_token_id is not None and int(gen_tokens[-1]) == int(eos_token_id))
     decoded = tokenizer.decode(gen_tokens, skip_special_tokens=True)
-    decoded_tail = tokenizer.decode(generated[0][-512:], skip_special_tokens=False)
-
-    suffix_triggered = stopper.triggered or CTRL_SUFFIX in decoded_tail
-
-    salvage_tokens_used = 0
-    salvage_last_token: Optional[int] = None
-    if CTRL_PREFIX in decoded and CTRL_SUFFIX not in decoded:
-        trailer_start = decoded.rfind(CTRL_PREFIX)
-        partial_trailer = decoded[trailer_start:]
-        salvage_prompt = (
-            "Continue exactly from the partial control trailer below. "
-            "Output only the remaining JSON and the literal CTRL>>>.\n"
-            f"{partial_trailer}"
-        )
-        salvage_input = tokenizer(salvage_prompt, return_tensors="pt").input_ids.to(model.device)
-        salvage_mask = torch.ones_like(salvage_input)
-        salvage_stop = SuffixStop(tokenizer, CTRL_SUFFIX)
-        salvage_args: Dict[str, Any] = {
-            "input_ids": salvage_input,
-            "attention_mask": salvage_mask,
-            "max_new_tokens": salvage_max_tokens,
-            "do_sample": True,
-            "temperature": temperature,
-            "top_p": top_p,
-            "repetition_penalty": repetition_penalty,
-            "stopping_criteria": StoppingCriteriaList([salvage_stop]),
-            "pad_token_id": pad_token_id,
-        }
-        if top_k is not None:
-            salvage_args["top_k"] = int(top_k)
-        if bad_words_ids is not None:
-            salvage_args["bad_words_ids"] = bad_words_ids
-
-        salvage_out = model.generate(**salvage_args)
-        salvage_gen = salvage_out[0][salvage_input.shape[-1] :]
-        salvage_text = tokenizer.decode(salvage_gen, skip_special_tokens=True)
-        salvage_tokens_used = int(salvage_gen.shape[-1])
-        if salvage_gen.numel():
-            salvage_last_token = int(salvage_gen[-1])
-        decoded = f"{decoded}{salvage_text}"
-        suffix_triggered = suffix_triggered or salvage_stop.triggered or CTRL_SUFFIX in (
-            partial_trailer + salvage_text
-        )
 
     stripped = decoded.rstrip()
     suffix_at_end = stripped.endswith(CTRL_SUFFIX)
@@ -419,19 +417,13 @@ def generate_with_trailer(
     body_tokens = _safe_token_length(tokenizer, body_text)
     trailer_tokens = _safe_token_length(tokenizer, trailer_text)
 
-    tokens_used = int(gen_tokens.shape[-1]) + salvage_tokens_used
-    tokens_reserved = int(max_new_tokens) + (salvage_max_tokens if salvage_tokens_used else 0)
-    overflow_tokens = max(0, tokens_used - tokens_reserved)
+    trailer_budget = _estimate_trailer_budget(tokenizer, int(max_new_tokens))
+    body_budget = max(int(max_new_tokens) - trailer_budget, 0)
 
-    eos_stopped = False
-    if eos_token_id is not None:
-        eos_stopped = bool(gen_tokens.numel() and int(gen_tokens[-1]) == int(eos_token_id))
-        if salvage_last_token is not None:
-            eos_stopped = eos_stopped or salvage_last_token == int(eos_token_id)
+    stop_reason = "ctrl_suffix" if stopper.triggered else ("eos" if eos_hit else "max_new_tokens")
 
-    stop_reason = "suffix" if suffix_triggered and suffix_at_end else (
-        "eos" if eos_stopped else ("max_new_tokens" if tokens_used >= max_new_tokens else "other")
-    )
+    tokens_used = int(gen_tokens.shape[-1])
+    overflow_tokens = max(0, tokens_used - int(max_new_tokens))
 
     return GenerationResult(
         text=decoded,
@@ -442,12 +434,12 @@ def generate_with_trailer(
         trailer_offset=trailer_offset,
         input_tokens=int(input_ids.shape[-1]),
         max_new_tokens=int(max_new_tokens),
-        tokens_reserved=tokens_reserved,
+        tokens_reserved=int(max_new_tokens),
         body_tokens=body_tokens,
         trailer_tokens=trailer_tokens,
         tokens_body_overflow=max(body_tokens - body_budget, 0),
         tokens_trailer_overflow=max(trailer_tokens - trailer_budget, 0),
-        suffix_triggered=suffix_triggered,
+        suffix_triggered=stopper.triggered,
         body_budget=body_budget,
         trailer_budget=trailer_budget,
     )
