@@ -138,7 +138,48 @@ Return JSON only with those fields.
 
 ---
 
-## 6. Optional SLURM helper
+## 6. Matrix rerun workflow
+
+For large replays, the repository now provides a simple pipeline that extracts all
+previous runs, shards them, rotates historical logs, and launches parallel SLURM jobs.
+
+1. **Enumerate tasks** – Point `tools/build_tasks_from_logs.py` at a prior matrix log
+   directory to rebuild a canonical `tasks.jsonl`:
+
+   ```bash
+   make build-tasks LOGS=logs/matrix_<previous_timestamp>
+   ```
+
+2. **Split into shards** – Balance the unified list into four (or more) parts that can
+   run independently:
+
+   ```bash
+   make split-tasks SHARDS=4
+   ```
+
+3. **Rotate or archive old matrices** – Move any existing `logs/matrix_*` directories
+   aside (default is archival under `logs/_archive/<ts>/`). Provide an optional glob to
+   keep an in-flight run untouched:
+
+   ```bash
+   bash scripts/rotate_logs.sh logs --archive "${LOGDIR}"*
+   ```
+
+4. **Submit shards to Snellius** – Each shard writes to its own log directory via
+   `scripts/run_tasks.py`, so the final layout becomes
+   `logs/matrix_fullrerun_<ts>/shard{0..3}/...`:
+
+   ```bash
+   export LOGDIR=logs/matrix_fullrerun_$(date +%Y%m%d-%H%M%S)
+   make submit-shards LOGDIR="$LOGDIR" WORKERS=8
+   ```
+
+The submission script honors the `LLMTRIAL_RUN_TEMPLATE` environment variable for custom
+per-task commands and exposes `PART`, `CPUS`, `MEM`, and `WORKERS` overrides for SLURM.
+
+---
+
+## 7. Optional SLURM helper
 
 The repository includes `run_fixed.job`, a ready-to-submit Snellius SLURM script that
 launches the fixed runner on a single GPU. Submit it with `sbatch run_fixed.job` to
@@ -147,7 +188,7 @@ recreate the example workload used during development. Logs stream to
 
 ---
 
-## 7. Tests
+## 8. Tests
 
 Unit coverage for the new flow lives in `tests/test_simple_dialog.py`. Legacy
 control-trailer tests are marked as skipped to reflect the simplified runtime. Run the
