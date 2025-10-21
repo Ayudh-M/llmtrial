@@ -1,0 +1,36 @@
+#!/bin/bash
+#SBATCH -J matrix_all
+#SBATCH -A tesr108469
+#SBATCH -p gpu_h100
+#SBATCH -t 01:00:00
+#SBATCH --gpus=1
+#SBATCH --cpus-per-task=8
+#SBATCH --mem=64G
+#SBATCH -o logs/%x-%j.out
+
+set -euo pipefail
+module purge && module load 2025
+source ~/.venvs/llmtrial/bin/activate
+
+export HF_HOME="$HOME/.cache/huggingface"
+export TRANSFORMERS_VERBOSITY=warning
+export PYTHONUNBUFFERED=1
+export PYTHONPATH=.
+
+cd ~/projects/llmtrial
+
+# Adjust models as desired
+MODEL=mistralai/Mistral-7B-Instruct-v0.3
+
+python -m src.run_matrix \
+  --tasks tasks/tasks.yaml \
+  --strategies ALL \
+  --turns 6 \
+  --model-a "$MODEL" \
+  --model-b "$MODEL" \
+  --max-new-tokens 192 \
+  --temperature 0.7 \
+  --top-p 0.9 \
+  --repeats 2 \
+  --seed 42 \
+  --outdir logs

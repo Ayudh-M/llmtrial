@@ -23,7 +23,7 @@ def test_fixed_turn_pass_through(monkeypatch, tmp_path):
     agent_b = DummyHF(outputs=["solve B1", "solve B2", "solve B3"])
     monkeypatch.setattr(sd, "SimpleHF", lambda model_id: agent_a if "modelA" in model_id else agent_b)
 
-    transcript, summary = run_dialog(
+    result = run_dialog(
         scenario_text="TASK: add 2+2",
         strategy_id="NL",
         roleset_id="Planner-Solver",
@@ -35,8 +35,11 @@ def test_fixed_turn_pass_through(monkeypatch, tmp_path):
         outdir=str(tmp_path),
     )
 
+    transcript = result["transcript"]
+    cfg = result["config"]
+
     assert len(transcript) == 4
-    assert transcript[0].actor == "A"
-    assert transcript[1].actor == "B"
-    assert transcript[1].text_in == transcript[0].text_out
-    assert summary.turns == 4
+    assert transcript[0]["actor"] == "A"
+    assert transcript[1]["actor"] == "B"
+    assert transcript[1]["text_in"] == transcript[0]["text_out"]
+    assert cfg["turns"] == 4
