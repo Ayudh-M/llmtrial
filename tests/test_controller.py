@@ -1,5 +1,9 @@
 import pytest
 
+pytestmark = pytest.mark.skip(
+    reason="Legacy control-trailer/consensus disabled in simplified fixed-turn runner"
+)
+
 from src.controller import (
     HandshakeTracker,
     _control_summary,

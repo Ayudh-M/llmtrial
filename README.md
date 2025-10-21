@@ -1,189 +1,161 @@
-````md
-# Snellius Clean-Start & Run Guide
+# Fixed-Turn A↔B Dialog Runner
 
-This is a copy-paste friendly checklist for teammates to **start clean** on Snellius, clone the repo, set up a fresh environment, and run a job on **H100**. It uses the **2025** software stack.
+This repository now ships a minimal, robust "pass-through" dialog runner that wires two
+Hugging Face causal language models into an alternating conversation for a fixed number
+of turns. Strategies and roles are pure prompt presets—there are no control trailers,
+consensus loops, or envelope schemas in the execution path.
 
-> If your repo URL is different, change `REPO_URL` below before you run the commands.
-
----
-
-## 0) One-time: log in
-
-SSH into Snellius from your terminal:
-
-```bash
-ssh your_username@snellius.surf.nl
-````
+Legacy orchestrator modules remain in the tree for reference, but the supported workflow
+is entirely driven by the new runner described below.
 
 ---
 
-## 1) Start clean (cancel jobs, remove old checkout, venv, and caches)
+## 1. Environment setup
 
 ```bash
-# Cancel any queued/running jobs under your user
-squeue -u "$USER" | awk 'NR>1{print $1}' | xargs -r scancel
-
-# Remove previous checkout, venv, and HF caches (user-space only)
-rm -rf ~/projects/llm-orchestrator ~/.venvs/consensus ~/.cache/huggingface ~/.cache/hf
-```
-
----
-
-## 2) Clone the repo
-
-```bash
-REPO_URL="https://github.com/Ayudh-M/llm-orchestrator.git"   # change if needed
-mkdir -p ~/projects && cd ~/projects
-git clone "$REPO_URL" llm-orchestrator
-cd llm-orchestrator
-git remote -v
-```
-
----
-
-## 3) Load modules (2025 stack) and create a fresh venv
-
-```bash
-module purge
-module load 2025
-module load Python/3.12.3-GCCcore-13.3.0
-
-python -m venv ~/.venvs/consensus
-source ~/.venvs/consensus/bin/activate
-
-python -m pip install -U pip wheel
+python -m venv .venv
+source .venv/bin/activate
+pip install -U pip
 pip install -r requirements.txt
+mkdir -p logs
+```
+
+The runner loads Hugging Face models directly. Ensure you have credentials configured if
+you are pulling gated checkpoints.
+
+---
+
+## 2. Prompt presets
+
+Prompt text is defined in `src/presets.py`:
+
+* `STRATEGIES` holds stylistic instructions (e.g., `NL`, `JSON_SCHEMA`, `PSEUDOCODE`).
+* `ROLESETS` defines the role-specific guidance for actors `A` and `B`.
+
+These values are pure text snippets that become the system prompt for each actor. Add or
+edit entries as needed to change behaviors—no schema changes are required.
+
+---
+
+## 3. Running a dialog
+
+Use the `src.simple_dialog` module to launch a fixed-turn exchange. The CLI accepts
+scenario text, strategy/roleset IDs, model identifiers, and generation parameters.
+
+```bash
+python -m src.simple_dialog \
+  --scenario "Task: Sum 1..100. Output only the number." \
+  --strategy JSON_SCHEMA \
+  --roleset Planner-Solver \
+  --turns 4 \
+  --model-a mistralai/Mistral-7B-Instruct-v0.3 \
+  --model-b mistralai/Mistral-7B-Instruct-v0.3 \
+  --max-new-tokens 128 \
+  --temperature 0.2 \
+  --top-p 0.95 \
+  --seed 7 \
+  --outdir logs
+```
+
+* `--scenario` accepts raw text or `@path/to/file.txt` to read task text from disk.
+* Generation defaults (max tokens, temperature, top-p) can be overridden per run.
+* Models `A` and `B` are independent—use different IDs if desired.
+* The runner alternates speakers starting with actor `A` and feeds each response as the
+  next turn's input message.
+
+---
+
+## 4. Output artifacts
+
+Each run writes two files to the specified `--outdir` (default `logs/`):
+
+1. **Transcript JSONL** – `logs/runs_fixed_<strategy>_<roleset>_<timestamp>.jsonl`
+   ```json
+   {
+     "config": {
+       "scenario": "Task: Sum 1..100. Output only the number.",
+       "strategy": "JSON_SCHEMA",
+       "roleset": "Planner-Solver",
+       "turns": 4,
+       "model_a": "mistralai/Mistral-7B-Instruct-v0.3",
+       "model_b": "mistralai/Mistral-7B-Instruct-v0.3",
+       "seed": 7,
+       "total_prompt_tokens": 123,
+       "total_output_tokens": 456
+     },
+     "transcript": [
+       {
+         "r": 1,
+         "actor": "A",
+         "text_in": "Task: …",
+         "text_out": "…",
+         "prompt_tokens": 101,
+         "output_tokens": 32,
+         "stop_reason": "eos_or_sample"
+       },
+       {
+         "r": 2,
+         "actor": "B",
+         "text_in": "…",
+         "text_out": "…",
+         "prompt_tokens": 88,
+         "output_tokens": 40,
+         "stop_reason": "length"
+       }
+     ]
+   }
+   ```
+2. **Token accounting CSV** – `logs/runs_fixed_<strategy>_<roleset>_<timestamp>.csv`
+   ```csv
+   r,actor,prompt_tokens,output_tokens,stop_reason
+   1,A,101,32,eos_or_sample
+   2,B,88,40,length
+   ```
+
+The JSONL file holds a single object per run and is ready for offline inspection or
+manual evaluation. The CSV provides easy-to-plot token counts per turn.
+
+---
+
+## 5. Manual evaluation workflow
+
+Quantitative judging happens outside this repository. After a run completes, upload the
+JSONL transcript (and optionally the CSV) to a stronger evaluation model with a prompt
+like:
+
+```
+You are an evaluator. Given a strategy, roleset, the original task, and the
+turn-ordered transcript (JSON), compute:
+- turn_count
+- best_turn (earliest turn with correct complete answer)
+- final_quality (0–1)
+- hallucination_turns (list)
+- adherence_score to requested strategy (0–1)
+- notes (1-3 sentences)
+
+Return JSON only with those fields.
 ```
 
 ---
 
-## 4) Quick smoke test (CPU, mock agents)
+## 6. Optional SLURM helper
 
-This does **not** download models. Good to verify your setup.
-
-```bash
-python -m src.main --scenario mistral_math_smoke --mock
-```
-
-Expected: prints a small **FINAL TEXT** (e.g., `4`).
+The repository includes `run_fixed.job`, a ready-to-submit Snellius SLURM script that
+launches the fixed runner on a single GPU. Submit it with `sbatch run_fixed.job` to
+recreate the example workload used during development. Logs stream to
+`logs/llm_fixed-<JOBID>.out`.
 
 ---
 
-## 5) H100 job script (quoted heredoc; safe to paste)
+## 7. Tests
+
+Unit coverage for the new flow lives in `tests/test_simple_dialog.py`. Legacy
+control-trailer tests are marked as skipped to reflect the simplified runtime. Run the
+active suite with:
 
 ```bash
-cat > run_gpu_h100_only.job <<'SLURM'
-#!/bin/bash
-#SBATCH -J consensus_h100_only
-#SBATCH -A tesr108469
-#SBATCH -p gpu_h100
-#SBATCH --gpus=1
-#SBATCH --ntasks=1
-#SBATCH --cpus-per-task=8
-#SBATCH --mem=40G
-#SBATCH --time=00:20:00
-#SBATCH -o logs/%x-%j.out
-
-set -euo pipefail
-cd "$SLURM_SUBMIT_DIR"
-mkdir -p logs runs
-
-module purge
-module load 2025
-module load Python/3.12.3-GCCcore-13.3.0
-source "${HOME}/.venvs/consensus/bin/activate"
-
-# Use node-local scratch for Hugging Face cache (faster pulls)
-export HF_HOME="${TMPDIR:-/scratch-local/$USER/${SLURM_JOB_ID}}/hf"
-mkdir -p "$HF_HOME"
-
-# Ensure local package imports work
-export PYTHONPATH="$SLURM_SUBMIT_DIR/src:${PYTHONPATH:-}"
-
-# Ensure this is an H100 GPU
-GPU_NAME="$(nvidia-smi --query-gpu=name --format=csv,noheader | head -1 || true)"
-case "$GPU_NAME" in
-  *H100* ) echo "OK: $GPU_NAME";;
-  * ) echo "ERROR: Need H100, got: ${GPU_NAME:-unknown}"; exit 2;;
-esac
-
-SCENARIO_ID="${1:?usage: sbatch run_gpu_h100_only.job <scenario_id>}"
-srun --ntasks=1 python -m src.main --scenario "$SCENARIO_ID"
-SLURM
-chmod +x run_gpu_h100_only.job
+pytest -q
 ```
 
-> If your SLURM account is not `tesr108469`, change `#SBATCH -A` accordingly.
-
----
-
-## 6) Submit a GPU run (H100)
-
-```bash
-JID=$(sbatch run_gpu_h100_only.job mistral_math_smoke | awk '{print $4}'); echo "JOBID=$JID"
-tail -f "logs/consensus_h100_only-$JID.out"
-```
-
----
-
-## 7) Inspect the latest run result
-
-**Option A (if the helper script exists):**
-
-```bash
-python scripts/show_latest_run.py
-```
-
-**Option B (portable inline snippet):**
-
-```bash
-python - <<'PY'
-import glob, json, os
-files = sorted(glob.glob('runs/*.json'), key=os.path.getmtime)
-if not files: raise SystemExit("No runs found.")
-p = files[-1]
-print("LATEST:", p)
-d = json.load(open(p, encoding='utf-8'))
-print("status:", d.get("status"), "rounds:", d.get("rounds"))
-print("canonical_text:", d.get("canonical_text"))
-PY
-```
-
----
-
-## 8) Rerun with a different scenario (examples)
-
-Edit or add scenarios in `prompts/registry.yaml`. Then:
-
-```bash
-# Regex example (if defined in registry)
-JID=$(sbatch run_gpu_h100_only.job regex_email_basic | awk '{print $4}'); echo "JOBID=$JID"
-tail -f "logs/consensus_h100_only-$JID.out"
-```
-
-You can override model/dtype in `src.main` if needed (e.g., `--model-a`, `--model-b`, `--dtype`), but by default the **strategy and models** come from the registry.
-
----
-
-## 9) Common gotchas
-
-* **Do not paste angle brackets** in commands (e.g., `<your-username>`). Use real values or variables as shown.
-* Always use the **quoted heredoc** (`<<'SLURM'`) when creating job scripts to prevent accidental interpolation.
-* Keep `PYTHONPATH` pointing at `src/` inside the job script.
-* Use the **2025** stack modules as above; the 2024 stack is limited and may miss dependencies.
-
----
-
-## 10) Reset again later (clean slate)
-
-If you want to fully reset and reclone later:
-
-```bash
-squeue -u "$USER" | awk 'NR>1{print $1}' | xargs -r scancel
-rm -rf ~/projects/llm-orchestrator ~/.venvs/consensus ~/.cache/huggingface ~/.cache/hf
-# then repeat from Section 2
-```
-
-```
-```
-
+The dummy-based test stubs the HF layer, so the suite runs quickly on CPU-only
+workstations.
