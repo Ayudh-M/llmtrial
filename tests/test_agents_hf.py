@@ -114,7 +114,7 @@ def test_trailer_only_retry_completes_truncated_trailer(monkeypatch):
         max_new_tokens=10,
         body_budget=0,
         trailer_budget=10,
-        tokens_reserved=10,
+        tokens_reserved=18,
         body_tokens=0,
         trailer_tokens=8,
         tokens_body_overflow=0,

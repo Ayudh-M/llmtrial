@@ -36,30 +36,44 @@ _DTYPE_ALIASES: Mapping[str, torch.dtype] = {
 }
 
 
-class SuffixStopper(StoppingCriteria):
-    """Stop generation once the token sequence ends with the CTRL suffix."""
+class SuffixStop(StoppingCriteria):
+    """Stop generation once the decoded text contains the CTRL suffix."""
 
-    def __init__(self, tokenizer: PreTrainedTokenizer, suffix: str) -> None:
+    def __init__(self, tokenizer: PreTrainedTokenizer, suffix: str, lookback_chars: int = 160) -> None:
         super().__init__()
-        self._suffix_ids = tokenizer.encode(suffix, add_special_tokens=False)
-        if not self._suffix_ids:
-            # Fallback for tokenizers that require a leading space
-            self._suffix_ids = tokenizer.encode(" " + suffix, add_special_tokens=False)
+        self._tokenizer = tokenizer
+        self._suffix = suffix
+        self._lookback = max(int(lookback_chars), len(suffix))
         self.triggered = False
 
     def __call__(self, input_ids: torch.LongTensor, scores: torch.FloatTensor, **_: Any) -> bool:
-        if not self._suffix_ids:
+        if input_ids.numel() == 0:
             return False
-        sequence = input_ids[0].tolist()
-        if len(sequence) < len(self._suffix_ids):
-            return False
-        if sequence[-len(self._suffix_ids) :] == self._suffix_ids:
+        ids = input_ids[0].tolist()
+        tail = self._tokenizer.decode(ids[-512:], skip_special_tokens=False)
+        if self._suffix in tail[-self._lookback :]:
             self.triggered = True
             return True
         return False
 
-    def set_input_length(self, length: int) -> None:
-        self._input_length = max(int(length), 0)
+
+def _safe_token_length(tokenizer: PreTrainedTokenizer, text: str) -> int:
+    if not text:
+        return 0
+    try:
+        tokens = tokenizer.encode(text, add_special_tokens=False)
+    except TypeError:
+        tokens = tokenizer.encode(text)
+    except Exception:
+        tokens = None
+    if tokens is None:
+        stripped = text.strip()
+        return len(stripped.split()) if stripped else 0
+    if hasattr(tokens, "input_ids") and hasattr(tokens.input_ids, "__len__"):
+        return len(tokens.input_ids)  # type: ignore[arg-type]
+    if hasattr(tokens, "__len__"):
+        return len(tokens)  # type: ignore[arg-type]
+    return 0
 
 
 def _safe_token_length(tokenizer: PreTrainedTokenizer, text: str) -> int:
@@ -311,17 +325,53 @@ def generate_with_trailer(
     prompt: Sequence[Dict[str, str]] | str,
     *,
     max_new_tokens: int = 512,
-    do_sample: bool = False,
     **generate_kwargs: Any,
 ) -> GenerationResult:
+    params: Dict[str, Any] = dict(generate_kwargs)
+
+    requested_max = int(params.pop("max_new_tokens", max_new_tokens))
+    trailer_budget = int(
+        params.pop(
+            "trailer_budget",
+            max(int(requested_max * TRAILER_RESERVE_FRACTION), 96),
+        )
+    )
+    body_budget = int(params.pop("body_budget", max(requested_max - trailer_budget, 0)))
+    ensured_max = max(requested_max, body_budget + trailer_budget)
+    max_new_tokens = ensured_max
+
+    min_new_tokens = int(params.pop("min_new_tokens", max(min(64, max_new_tokens // 2), 0)))
+    raw_salvage = params.pop("salvage_max_new_tokens", None)
+    salvage_max_tokens = max(
+        int(raw_salvage) if raw_salvage is not None else max(trailer_budget, 64),
+        1,
+    )
+
+    do_sample = bool(params.pop("do_sample", True))
+
+    raw_temperature = params.pop("temperature", None)
+    temperature = float(raw_temperature) if raw_temperature is not None else 0.7
+
+    raw_top_p = params.pop("top_p", None)
+    top_p = float(raw_top_p) if raw_top_p is not None else 0.9
+
+    raw_top_k = params.pop("top_k", None)
+    top_k = int(raw_top_k) if raw_top_k is not None else None
+
+    raw_rep_penalty = params.pop("repetition_penalty", None)
+    repetition_penalty = float(raw_rep_penalty) if raw_rep_penalty is not None else 1.05
+
     input_ids = build_inputs(tokenizer, prompt, add_generation_prompt=True).to(model.device)
     attention_mask = torch.ones_like(input_ids)
-    stopper = SuffixStopper(tokenizer, CTRL_SUFFIX)
+    stopper = SuffixStop(tokenizer, CTRL_SUFFIX)
     stopping = StoppingCriteriaList([stopper])
     stopper.set_input_length(int(input_ids.shape[-1]))
 
     pad_token_id = tokenizer.pad_token_id or tokenizer.eos_token_id
     eos_token_id = tokenizer.eos_token_id
+    bad_words_ids: Optional[List[List[int]]] = None
+    if eos_token_id is not None:
+        bad_words_ids = [[int(eos_token_id)]]
 
     sampling_kwargs: Dict[str, Any] = {}
     temperature = generate_kwargs.pop("temperature", None)

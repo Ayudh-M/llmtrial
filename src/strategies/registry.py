@@ -293,7 +293,7 @@ register_strategy(
         controller_behaviors=(
             _set_body_style_meta("control"),
         ),
-        agent_profile=AgentProfile(greedy=True, k_samples=1, max_new_tokens=256),
+        agent_profile=AgentProfile(greedy=False, k_samples=1, max_new_tokens=288),
         metadata={
             "title": "Control trailer negotiation",
             "body_style": "control",

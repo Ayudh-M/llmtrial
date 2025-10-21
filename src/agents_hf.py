@@ -480,7 +480,7 @@ class HFChatAgent:
                 **gen_kwargs,
             )
             last_output = result.text
-            trailer_only_retry = False
+            trailer_only_retry = result.tokens_reserved > result.max_new_tokens
 
             totals["tokens_used_total"] += max(int(result.tokens_used), 0)
             totals["tokens_reserved_total"] += max(int(result.tokens_reserved), 0)
