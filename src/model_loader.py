@@ -519,7 +519,7 @@ __all__ = [
     "TINY_REPO",
     "TINY_TOKENIZER",
     "GenerationResult",
-    "SuffixStopper",
+    "SuffixStop",
     "build_inputs",
     "generate_json_only",
     "generate_with_trailer",
