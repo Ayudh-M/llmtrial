@@ -57,9 +57,8 @@ def _balanced_object_from_end(text: str) -> Optional[Tuple[int, int, str]]:
     if start == -1:
         return None
 
-    json_end = suffix_pos + 1
-    json_text = text[start:json_end]
-    return start, json_end, json_text
+    json_text = text[start:suffix_pos]
+    return start, suffix_pos, json_text
 
 
 def extract_control_trailer(text: str) -> Dict[str, Any]:
@@ -79,19 +78,6 @@ def extract_control_trailer(text: str) -> Dict[str, Any]:
         "error": "NOT_FOUND",
         "offsets": {"json_start": -1, "json_end": -1, "suffix_at_end": False},
     }
-    prefix_idx = text.rfind(CTRL_PREFIX)
-    if prefix_idx != -1 and CTRL_SUFFIX not in text[prefix_idx:]:
-        out["body"] = text[:prefix_idx]
-        out["offsets"].update(
-            {
-                "json_start": prefix_idx + len(CTRL_PREFIX),
-                "json_end": len(text),
-                "suffix_at_end": False,
-            }
-        )
-        out["error"] = "ERR_TRAILER_UNCLOSED"
-        return out
-
     hit = _balanced_object_from_end(text)
     if not hit:
         return out

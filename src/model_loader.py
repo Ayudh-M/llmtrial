@@ -36,48 +36,6 @@ _DTYPE_ALIASES: Mapping[str, torch.dtype] = {
 }
 
 
-def _token_length(tokenizer: PreTrainedTokenizer, text: str) -> int:
-    try:
-        tokens = tokenizer.encode(text, add_special_tokens=False)
-    except TypeError:
-        tokens = tokenizer.encode(text)  # type: ignore[arg-type]
-    except Exception:
-        tokens = None
-
-    if isinstance(tokens, torch.Tensor):
-        return int(tokens.shape[-1])
-    if hasattr(tokens, "input_ids"):
-        candidate = getattr(tokens, "input_ids")
-        if hasattr(candidate, "shape"):
-            return int(candidate.shape[-1])
-        if hasattr(candidate, "__len__"):
-            return len(candidate)  # type: ignore[arg-type]
-    if isinstance(tokens, (list, tuple)):
-        return len(tokens)
-    if hasattr(tokens, "__len__"):
-        try:
-            return len(tokens)  # type: ignore[arg-type]
-        except TypeError:
-            return 0
-    return 0
-
-
-def estimate_trailer_token_budget(
-    tokenizer: PreTrainedTokenizer, *, margin: int = DEFAULT_TRAILER_MARGIN
-) -> int:
-    """Estimate trailer token budget for the CTRL envelope with configurable margin."""
-
-    base = getattr(tokenizer, "_ctrl_trailer_base_tokens", None)
-    if not isinstance(base, int):
-        base = _token_length(tokenizer, TRAILER_TEMPLATE)
-        if base == 0:
-            base = _token_length(tokenizer, " " + TRAILER_TEMPLATE)
-        setattr(tokenizer, "_ctrl_trailer_base_tokens", base)
-
-    margin = max(int(margin), 0)
-    return base + margin
-
-
 class SuffixStopper(StoppingCriteria):
     """Stop generation once the token sequence ends with the CTRL suffix."""
 
@@ -88,14 +46,11 @@ class SuffixStopper(StoppingCriteria):
             # Fallback for tokenizers that require a leading space
             self._suffix_ids = tokenizer.encode(" " + suffix, add_special_tokens=False)
         self.triggered = False
-        self._input_length = 0
 
     def __call__(self, input_ids: torch.LongTensor, scores: torch.FloatTensor, **_: Any) -> bool:
         if not self._suffix_ids:
             return False
         sequence = input_ids[0].tolist()
-        if self._input_length:
-            sequence = sequence[self._input_length :]
         if len(sequence) < len(self._suffix_ids):
             return False
         if sequence[-len(self._suffix_ids) :] == self._suffix_ids:
@@ -109,24 +64,14 @@ class SuffixStopper(StoppingCriteria):
 
 @dataclass
 class GenerationResult:
-    """Container describing a single decode attempt."""
-
     text: str
-    stop_reason: str = "unknown"
-    tokens_used: int = 0
-    overflow_tokens: int = 0
-    has_tail: bool = False
-    trailer_offset: int = -1
-    suffix_triggered: bool = False
+    stop_reason: str
+    tokens_used: int
+    overflow_tokens: int
+    has_tail: bool
+    trailer_offset: int
     input_tokens: int = 0
     max_new_tokens: int = 0
-    body_budget: int = 0
-    trailer_budget: int = 0
-    tokens_reserved: int = 0
-    body_tokens: int = 0
-    trailer_tokens: int = 0
-    tokens_body_overflow: int = 0
-    tokens_trailer_overflow: int = 0
 
 
 def _resolve_dtype(dtype: Optional[str]) -> Optional[torch.dtype]:
@@ -299,18 +244,15 @@ def _decode_generated(
 ) -> GenerationResult:
     gen_tokens = generated[0][input_ids.shape[-1] :]
     text = tokenizer.decode(gen_tokens, skip_special_tokens=True)
-    used = int(gen_tokens.shape[-1])
-    overflow = max(0, used - int(max_new_tokens))
     return GenerationResult(
         text=text,
         stop_reason=stop_reason,
-        tokens_used=used,
-        overflow_tokens=overflow,
+        tokens_used=int(gen_tokens.shape[-1]),
+        overflow_tokens=max(0, int(gen_tokens.shape[-1]) - int(max_new_tokens)),
         has_tail=has_tail,
         trailer_offset=trailer_offset,
         input_tokens=int(input_ids.shape[-1]),
         max_new_tokens=int(max_new_tokens),
-        tokens_reserved=int(max_new_tokens),
     )
 
 
@@ -320,35 +262,14 @@ def generate_with_trailer(
     tokenizer: PreTrainedTokenizer,
     prompt: Sequence[Dict[str, str]] | str,
     *,
-    body_token_budget: Optional[int] = None,
-    trailer_token_budget: Optional[int] = None,
-    max_new_tokens: Optional[int] = None,
+    max_new_tokens: int = 512,
     do_sample: bool = False,
-    trailer_margin: int = DEFAULT_TRAILER_MARGIN,
     **generate_kwargs: Any,
 ) -> GenerationResult:
     input_ids = build_inputs(tokenizer, prompt, add_generation_prompt=True).to(model.device)
     attention_mask = torch.ones_like(input_ids)
     stopper = SuffixStopper(tokenizer, CTRL_SUFFIX)
-    stopper.set_input_length(int(input_ids.shape[-1]))
     stopping = StoppingCriteriaList([stopper])
-
-    if trailer_token_budget is None:
-        trailer_token_budget = estimate_trailer_token_budget(tokenizer, margin=trailer_margin)
-    trailer_token_budget = max(int(trailer_token_budget), 0)
-
-    if body_token_budget is None:
-        if max_new_tokens is not None:
-            total = max(int(max_new_tokens), 0)
-            body_token_budget = max(total - trailer_token_budget, 0)
-        else:
-            # Preserve historical behaviour (default total of 512 tokens).
-            total_default = 512
-            body_token_budget = max(total_default - trailer_token_budget, 0)
-    body_token_budget = max(int(body_token_budget), 0)
-
-    total_budget = int(body_token_budget + trailer_token_budget)
-    generate_kwargs.pop("max_new_tokens", None)
 
     pad_token_id = tokenizer.pad_token_id or tokenizer.eos_token_id
     eos_token_id = tokenizer.eos_token_id
@@ -356,7 +277,7 @@ def generate_with_trailer(
     generated = model.generate(
         input_ids=input_ids,
         attention_mask=attention_mask,
-        max_new_tokens=total_budget,
+        max_new_tokens=int(max_new_tokens),
         do_sample=bool(do_sample),
         stopping_criteria=stopping,
         pad_token_id=pad_token_id,
@@ -365,56 +286,22 @@ def generate_with_trailer(
     )
 
     gen_tokens = generated[0][input_ids.shape[-1] :]
-    tokens_used = int(gen_tokens.shape[-1])
-    eos_hit = bool(tokens_used and eos_token_id is not None and int(gen_tokens[-1]) == int(eos_token_id))
+    eos_hit = bool(len(gen_tokens) and eos_token_id is not None and int(gen_tokens[-1]) == int(eos_token_id))
+    stop_reason = "suffix" if stopper.triggered else ("eos" if eos_hit else "length")
 
     decoded = tokenizer.decode(gen_tokens, skip_special_tokens=True)
-    trimmed = decoded.rstrip()
-    suffix_at_end = trimmed.endswith(CTRL_SUFFIX) and trimmed == decoded
-    has_tail = not suffix_at_end
-
-    prefix_idx = decoded.rfind(CTRL_PREFIX)
-    trailer_text = decoded[prefix_idx:] if prefix_idx != -1 else ""
-    body_text = decoded[:prefix_idx] if prefix_idx != -1 else decoded
-
-    trailer_offset = -1
-    if suffix_at_end and prefix_idx != -1:
-        trailer_offset = prefix_idx + len(CTRL_PREFIX)
-
-    body_tokens = _token_length(tokenizer, body_text) if body_text else 0
-    trailer_tokens = _token_length(tokenizer, trailer_text) if trailer_text else 0
-
-    stop_reason: str
-    if stopper.triggered:
-        stop_reason = "suffix"
-    elif tokens_used >= total_budget:
-        stop_reason = "max_new_tokens"
-    elif eos_hit:
-        stop_reason = "eos_token"
-    else:
-        stop_reason = "unknown"
-
-    overflow_tokens = max(0, tokens_used - total_budget)
-    tokens_body_overflow = max(0, body_tokens - body_token_budget)
-    tokens_trailer_overflow = max(0, trailer_tokens - trailer_token_budget)
+    has_tail = not decoded.endswith(CTRL_SUFFIX)
+    trailer_offset = decoded.rfind("{") if decoded.endswith(CTRL_SUFFIX) else -1
 
     return GenerationResult(
         text=decoded,
         stop_reason=stop_reason,
-        tokens_used=tokens_used,
-        overflow_tokens=overflow_tokens,
+        tokens_used=int(gen_tokens.shape[-1]),
+        overflow_tokens=0,
         has_tail=has_tail,
         trailer_offset=trailer_offset,
         input_tokens=int(input_ids.shape[-1]),
-        max_new_tokens=total_budget,
-        body_budget=body_token_budget,
-        trailer_budget=trailer_token_budget,
-        tokens_reserved=total_budget,
-        body_tokens=body_tokens,
-        trailer_tokens=trailer_tokens,
-        tokens_body_overflow=tokens_body_overflow,
-        tokens_trailer_overflow=tokens_trailer_overflow,
-        suffix_triggered=stopper.triggered,
+        max_new_tokens=int(max_new_tokens),
     )
 
 
@@ -492,7 +379,6 @@ __all__ = [
     "TINY_REPO",
     "TINY_TOKENIZER",
     "GenerationResult",
-    "estimate_trailer_token_budget",
     "SuffixStopper",
     "build_inputs",
     "generate_json_only",
