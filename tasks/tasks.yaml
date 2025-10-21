@@ -1,0 +1,53 @@
+tasks:
+  - id: math_sum_1k
+    scenario: "TASK: Sum the integers 1..1000. Return only the number."
+    roleset: Math-SolverChecker
+    answer_regex: "\\b500500\\b"
+
+  - id: math_linear_pair
+    scenario: "TASK: Solve: If x+y=10 and x−y=2, return x*y only (just the number)."
+    roleset: Math-SolverChecker
+    answer_regex: "\\b32\\b"
+
+  - id: regex_email_basic
+    scenario: "TASK: Write one regex that matches example.com emails only. Show 4 positives and 4 negatives."
+    roleset: Regex-AuthorTester
+
+  - id: sql_2024_amount_per_customer
+    scenario: "TASK: From orders(id, customer_id, amount, created_at), return total amount per customer for 2024 (ANSI SQL)."
+    roleset: SQL-AuthorAuditor
+
+  - id: boolean_eval_small
+    scenario: "TASK: Evaluate: (A AND B) OR (NOT C) given A=true, B=false, C=false. Explain briefly then output TRUE or FALSE."
+    roleset: Boolean-ProposeCheck
+    answer_regex: "\\bTRUE\\b"
+
+  - id: entity_normalization_tiny
+    scenario: "TASK: Map 'U. of Cambridge' to a canonical ID. Output {mention, canonical_id, evidence}."
+    roleset: Entity-MapperQA
+
+  - id: headline_xsum_tiny
+    scenario: "TASK: Write a 12–16 word, factual headline for this short article: 'UK scientists announce a breakthrough...' (invent a plausible short article body to summarize)."
+    roleset: Headline-WriterAuditor
+
+  - id: mcq_arc_tiny
+    scenario: "TASK: Choose A–D. Reason first (briefly), then output only the letter: 'Which falls faster in vacuum? A) feather B) bowling ball C) same rate D) neither'."
+    roleset: MCQ-ReasonerAuditor
+    answer_regex: "\\bC\\b"
+
+  - id: paraphrase_tiny
+    scenario: "TASK: SAME or DIFFERENT: 'The meeting is at noon.' vs 'We meet at 12pm.' Explain in one line, then label."
+    roleset: Paraphrase-LabelerAuditor
+    answer_regex: "\\bSAME\\b"
+
+  - id: translate_en_de_glossary
+    scenario: "TASK: EN→DE translation. Enforce glossary: {battery=Akku, charger=Ladegerät}. Preserve numbers/units."
+    roleset: Translate-QE
+
+  - id: winogrande_tiny
+    scenario: "TASK: Pick the correct referent: 'Tom yelled at Jerry because he was late.' Who was late?"
+    roleset: Winogrande-ResolverRefuter
+
+  - id: writer_physicist_tiny
+    scenario: "TASK: Write a short, accurate explainer of gravitational waves for lay readers, then technically refine."
+    roleset: Writer-Physicist
