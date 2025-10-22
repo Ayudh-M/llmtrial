@@ -2,6 +2,9 @@ from __future__ import annotations
 
 from typing import Any, Dict, Mapping, Optional, Tuple, Union
 
+# Re-export the registry side effects so matrix-style strategy aliases are
+# registered as soon as the package is imported.
+from .registry import *  # noqa: F401,F403
 from .registry import (
     AgentProfile,
     Strategy,

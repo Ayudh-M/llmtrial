@@ -1,3 +1,7 @@
+defaults:
+  models: &default_matrix_models
+    a: mistralai/Mistral-7B-Instruct-v0.3
+    b: mistralai/Mistral-7B-Instruct-v0.3
 scenarios:
   llm_eval_preference:
     task: |
