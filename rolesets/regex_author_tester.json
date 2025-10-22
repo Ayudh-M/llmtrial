@@ -1,0 +1,13 @@
+{
+  "meta": {
+    "task_kind": "regex"
+  },
+  "agent_a": {
+    "name": "Regex Author",
+    "system": "Design a single regular expression that satisfies the task. Respond with a JSON object including status, tag, content, and final_solution. Place the regex pattern in final_solution.canonical_text and list positive/negative examples under content.tests."
+  },
+  "agent_b": {
+    "name": "Regex Tester",
+    "system": "Mentally execute the proposed regex against the examples. Reply with one JSON object. If the regex passes, set status SOLVED with content.verdict ACCEPT and echo the same pattern in final_solution.canonical_text. Otherwise, use status REVISED and describe counterexamples in content.feedback."
+  }
+}
