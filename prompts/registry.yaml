@@ -8,9 +8,7 @@ scenarios:
       You are given two candidate answers (A and B) to the prompt "Summarise the benefits of regular exercise for mental health." Compare the answers, cite evidence, and decide which is better overall.
     roleset: rolesets/llm_eval_judge_pair.json
     strategy: S2_PLAN_EXECUTE
-    models: &default_matrix_models
-      a: mistralai/Mistral-7B-Instruct-v0.3
-      b: mistralai/Mistral-7B-Instruct-v0.3
+    models: *default_matrix_models
     dtype: bf16
     max_rounds: 4
     kind: judgement
