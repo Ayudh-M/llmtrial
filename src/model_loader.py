@@ -367,39 +367,27 @@ def generate_with_trailer(
     max_new_tokens: int = 512,
     **generate_kwargs: Any,
 ) -> GenerationResult:
-    params: Dict[str, Any] = dict(generate_kwargs)
+    gen_kwargs: Dict[str, Any] = dict(generate_kwargs)
 
-    requested_max = int(params.pop("max_new_tokens", max_new_tokens))
+    requested_max = int(gen_kwargs.pop("max_new_tokens", max_new_tokens))
     trailer_budget = int(
-        params.pop(
+        gen_kwargs.pop(
             "trailer_budget",
             max(int(requested_max * TRAILER_RESERVE_FRACTION), 96),
         )
     )
-    body_budget = int(params.pop("body_budget", max(requested_max - trailer_budget, 0)))
+    body_budget = int(gen_kwargs.pop("body_budget", max(requested_max - trailer_budget, 0)))
     ensured_max = max(requested_max, body_budget + trailer_budget)
     max_new_tokens = ensured_max
 
-    min_new_tokens = int(params.pop("min_new_tokens", max(min(64, max_new_tokens // 2), 0)))
-    raw_salvage = params.pop("salvage_max_new_tokens", None)
+    min_new_tokens = int(gen_kwargs.pop("min_new_tokens", max(min(64, max_new_tokens // 2), 0)))
+    raw_salvage = gen_kwargs.pop("salvage_max_new_tokens", None)
     salvage_max_tokens = max(
         int(raw_salvage) if raw_salvage is not None else max(trailer_budget, 64),
         1,
     )
 
-    do_sample = bool(params.pop("do_sample", True))
-
-    raw_temperature = params.pop("temperature", None)
-    temperature = float(raw_temperature) if raw_temperature is not None else 0.7
-
-    raw_top_p = params.pop("top_p", None)
-    top_p = float(raw_top_p) if raw_top_p is not None else 0.9
-
-    raw_top_k = params.pop("top_k", None)
-    top_k = int(raw_top_k) if raw_top_k is not None else None
-
-    raw_rep_penalty = params.pop("repetition_penalty", None)
-    repetition_penalty = float(raw_rep_penalty) if raw_rep_penalty is not None else 1.05
+    do_sample = bool(gen_kwargs.pop("do_sample", True))
 
     input_ids = build_inputs(tokenizer, prompt, add_generation_prompt=True).to(model.device)
     attention_mask = torch.ones_like(input_ids)
@@ -414,9 +402,9 @@ def generate_with_trailer(
         bad_words_ids = [[int(eos_token_id)]]
 
     sampling_kwargs: Dict[str, Any] = {}
-    temperature = generate_kwargs.pop("temperature", None)
-    top_p = generate_kwargs.pop("top_p", None)
-    top_k = generate_kwargs.pop("top_k", None)
+    temperature = gen_kwargs.pop("temperature", None)
+    top_p = gen_kwargs.pop("top_p", None)
+    top_k = gen_kwargs.pop("top_k", None)
     if do_sample:
         if temperature is not None:
             sampling_kwargs["temperature"] = float(temperature)
@@ -426,20 +414,24 @@ def generate_with_trailer(
             sampling_kwargs["top_k"] = int(top_k)
 
     if bad_words_ids is not None:
-        generate_kwargs = dict(generate_kwargs)
-        generate_kwargs.setdefault("bad_words_ids", bad_words_ids)
+        gen_kwargs.setdefault("bad_words_ids", bad_words_ids)
 
-    generated = model.generate(
-        input_ids=input_ids,
-        attention_mask=attention_mask,
-        max_new_tokens=int(max_new_tokens),
-        do_sample=bool(do_sample),
-        stopping_criteria=stopping,
-        pad_token_id=pad_token_id,
-        eos_token_id=eos_token_id,
-        **sampling_kwargs,
-        **generate_kwargs,
-    )
+    final_kwargs: Dict[str, Any] = {
+        "input_ids": input_ids,
+        "attention_mask": attention_mask,
+        "max_new_tokens": int(max_new_tokens),
+        "do_sample": bool(do_sample),
+        "stopping_criteria": stopping,
+        "pad_token_id": pad_token_id,
+        "eos_token_id": eos_token_id,
+    }
+    final_kwargs.update(sampling_kwargs)
+    final_kwargs.update(gen_kwargs)
+
+    if "torch_dtype" in final_kwargs and "dtype" not in final_kwargs:
+        final_kwargs["dtype"] = final_kwargs.pop("torch_dtype")
+
+    generated = model.generate(**final_kwargs)
 
     def _analyze_text(text: str) -> Dict[str, Any]:
         stripped = text.rstrip()
