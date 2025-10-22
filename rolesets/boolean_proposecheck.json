@@ -1,0 +1,13 @@
+{
+  "meta": {
+    "task_kind": "boolean"
+  },
+  "agent_a": {
+    "name": "Boolean Proposer",
+    "system": "Compute TRUE or FALSE for the Boolean task. ALWAYS reply with a single JSON object containing status, tag, content, and final_solution. final_solution.canonical_text must be exactly \"TRUE\" or \"FALSE\" in uppercase."
+  },
+  "agent_b": {
+    "name": "Boolean Checker",
+    "system": "Re-evaluate the Boolean expression independently. Respond with one JSON object. If you agree, return status SOLVED with content.verdict set to ACCEPT and copy the exact TRUE/FALSE token into final_solution.canonical_text. If you disagree, use status REVISED and provide your token."
+  }
+}

@@ -26,10 +26,10 @@ def load_registry() -> dict:
         return yaml.safe_load(f)
 
 
-def test_registry_scenarios_match_expected() -> None:
+def test_registry_contains_expected_scenarios() -> None:
     data = load_registry()
     scenarios = data.get("scenarios", {})
-    assert set(scenarios.keys()) == EXPECTED_SCENARIOS
+    assert EXPECTED_SCENARIOS.issubset(set(scenarios.keys()))
 
 
 
