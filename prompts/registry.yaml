@@ -8,7 +8,9 @@ scenarios:
       You are given two candidate answers (A and B) to the prompt "Summarise the benefits of regular exercise for mental health." Compare the answers, cite evidence, and decide which is better overall.
     roleset: rolesets/llm_eval_judge_pair.json
     strategy: S2_PLAN_EXECUTE
-    models: *default_matrix_models
+    models: &default_matrix_models
+      a: mistralai/Mistral-7B-Instruct-v0.3
+      b: mistralai/Mistral-7B-Instruct-v0.3
     dtype: bf16
     max_rounds: 4
     kind: judgement
@@ -85,7 +87,7 @@ scenarios:
     max_rounds: 4
     kind: reasoning
 
-  "boolean_eval_small:DSL:Boolean-ProposeCheck": &boolean_eval_small_cfg
+  boolean_eval_small:DSL:Boolean-ProposeCheck: &boolean_eval_small_cfg
     task: |
       TASK: Evaluate: (A AND B) OR (NOT C) given A=true, B=false, C=false. Explain briefly then output TRUE or FALSE.
     roleset: rolesets/boolean_proposecheck.json
@@ -95,27 +97,27 @@ scenarios:
     max_rounds: 4
     kind: reasoning
 
-  "boolean_eval_small:JSON_SCHEMA:Boolean-ProposeCheck":
+  boolean_eval_small:JSON_SCHEMA:Boolean-ProposeCheck:
     <<: *boolean_eval_small_cfg
     strategy: JSON_SCHEMA
 
-  "boolean_eval_small:PSEUDOCODE:Boolean-ProposeCheck":
+  boolean_eval_small:PSEUDOCODE:Boolean-ProposeCheck:
     <<: *boolean_eval_small_cfg
     strategy: PSEUDOCODE
 
-  "boolean_eval_small:KQMLISH:Boolean-ProposeCheck":
+  boolean_eval_small:KQMLISH:Boolean-ProposeCheck:
     <<: *boolean_eval_small_cfg
     strategy: KQMLISH
 
-  "boolean_eval_small:EMERGENT_TOY:Boolean-ProposeCheck":
+  boolean_eval_small:EMERGENT_TOY:Boolean-ProposeCheck:
     <<: *boolean_eval_small_cfg
     strategy: EMERGENT_TOY
 
-  "boolean_eval_small:NL:Boolean-ProposeCheck":
+  boolean_eval_small:NL:Boolean-ProposeCheck:
     <<: *boolean_eval_small_cfg
     strategy: NL
 
-  "math_sum_1k:DSL:Math-SolverChecker": &math_sum_1k_cfg
+  math_sum_1k:DSL:Math-SolverChecker: &math_sum_1k_cfg
     task: |
       TASK: Sum the integers 1..1000. Return only the number.
     roleset: rolesets/math_solver_checker.json
@@ -125,27 +127,27 @@ scenarios:
     max_rounds: 4
     kind: math
 
-  "math_sum_1k:JSON_SCHEMA:Math-SolverChecker":
+  math_sum_1k:JSON_SCHEMA:Math-SolverChecker:
     <<: *math_sum_1k_cfg
     strategy: JSON_SCHEMA
 
-  "math_sum_1k:PSEUDOCODE:Math-SolverChecker":
+  math_sum_1k:PSEUDOCODE:Math-SolverChecker:
     <<: *math_sum_1k_cfg
     strategy: PSEUDOCODE
 
-  "math_sum_1k:KQMLISH:Math-SolverChecker":
+  math_sum_1k:KQMLISH:Math-SolverChecker:
     <<: *math_sum_1k_cfg
     strategy: KQMLISH
 
-  "math_sum_1k:EMERGENT_TOY:Math-SolverChecker":
+  math_sum_1k:EMERGENT_TOY:Math-SolverChecker:
     <<: *math_sum_1k_cfg
     strategy: EMERGENT_TOY
 
-  "math_sum_1k:NL:Math-SolverChecker":
+  math_sum_1k:NL:Math-SolverChecker:
     <<: *math_sum_1k_cfg
     strategy: NL
 
-  "math_linear_pair:DSL:Math-SolverChecker": &math_linear_pair_cfg
+  math_linear_pair:DSL:Math-SolverChecker: &math_linear_pair_cfg
     task: |
       TASK: Solve: If x+y=10 and x−y=2, return x*y only (just the number).
     roleset: rolesets/math_solver_checker.json
@@ -155,27 +157,27 @@ scenarios:
     max_rounds: 4
     kind: math
 
-  "math_linear_pair:JSON_SCHEMA:Math-SolverChecker":
+  math_linear_pair:JSON_SCHEMA:Math-SolverChecker:
     <<: *math_linear_pair_cfg
     strategy: JSON_SCHEMA
 
-  "math_linear_pair:PSEUDOCODE:Math-SolverChecker":
+  math_linear_pair:PSEUDOCODE:Math-SolverChecker:
     <<: *math_linear_pair_cfg
     strategy: PSEUDOCODE
 
-  "math_linear_pair:KQMLISH:Math-SolverChecker":
+  math_linear_pair:KQMLISH:Math-SolverChecker:
     <<: *math_linear_pair_cfg
     strategy: KQMLISH
 
-  "math_linear_pair:EMERGENT_TOY:Math-SolverChecker":
+  math_linear_pair:EMERGENT_TOY:Math-SolverChecker:
     <<: *math_linear_pair_cfg
     strategy: EMERGENT_TOY
 
-  "math_linear_pair:NL:Math-SolverChecker":
+  math_linear_pair:NL:Math-SolverChecker:
     <<: *math_linear_pair_cfg
     strategy: NL
 
-  "regex_email_basic:DSL:Regex-AuthorTester": &regex_email_basic_cfg
+  regex_email_basic:DSL:Regex-AuthorTester: &regex_email_basic_cfg
     task: |
       TASK: Write one regex that matches example.com emails only. Show 4 positives and 4 negatives.
     roleset: rolesets/regex_author_tester.json
@@ -185,27 +187,27 @@ scenarios:
     max_rounds: 4
     kind: code
 
-  "regex_email_basic:JSON_SCHEMA:Regex-AuthorTester":
+  regex_email_basic:JSON_SCHEMA:Regex-AuthorTester:
     <<: *regex_email_basic_cfg
     strategy: JSON_SCHEMA
 
-  "regex_email_basic:PSEUDOCODE:Regex-AuthorTester":
+  regex_email_basic:PSEUDOCODE:Regex-AuthorTester:
     <<: *regex_email_basic_cfg
     strategy: PSEUDOCODE
 
-  "regex_email_basic:KQMLISH:Regex-AuthorTester":
+  regex_email_basic:KQMLISH:Regex-AuthorTester:
     <<: *regex_email_basic_cfg
     strategy: KQMLISH
 
-  "regex_email_basic:EMERGENT_TOY:Regex-AuthorTester":
+  regex_email_basic:EMERGENT_TOY:Regex-AuthorTester:
     <<: *regex_email_basic_cfg
     strategy: EMERGENT_TOY
 
-  "regex_email_basic:NL:Regex-AuthorTester":
+  regex_email_basic:NL:Regex-AuthorTester:
     <<: *regex_email_basic_cfg
     strategy: NL
 
-  "sql_2024_amount_per_customer:DSL:SQL-AuthorAuditor": &sql_2024_amount_per_customer_cfg
+  sql_2024_amount_per_customer:DSL:SQL-AuthorAuditor: &sql_2024_amount_per_customer_cfg
     task: |
       TASK: From orders(id, customer_id, amount, created_at), return total amount per customer for 2024 (ANSI SQL).
     roleset: rolesets/sql_author_auditor.json
@@ -215,27 +217,27 @@ scenarios:
     max_rounds: 4
     kind: code
 
-  "sql_2024_amount_per_customer:JSON_SCHEMA:SQL-AuthorAuditor":
+  sql_2024_amount_per_customer:JSON_SCHEMA:SQL-AuthorAuditor:
     <<: *sql_2024_amount_per_customer_cfg
     strategy: JSON_SCHEMA
 
-  "sql_2024_amount_per_customer:PSEUDOCODE:SQL-AuthorAuditor":
+  sql_2024_amount_per_customer:PSEUDOCODE:SQL-AuthorAuditor:
     <<: *sql_2024_amount_per_customer_cfg
     strategy: PSEUDOCODE
 
-  "sql_2024_amount_per_customer:KQMLISH:SQL-AuthorAuditor":
+  sql_2024_amount_per_customer:KQMLISH:SQL-AuthorAuditor:
     <<: *sql_2024_amount_per_customer_cfg
     strategy: KQMLISH
 
-  "sql_2024_amount_per_customer:EMERGENT_TOY:SQL-AuthorAuditor":
+  sql_2024_amount_per_customer:EMERGENT_TOY:SQL-AuthorAuditor:
     <<: *sql_2024_amount_per_customer_cfg
     strategy: EMERGENT_TOY
 
-  "sql_2024_amount_per_customer:NL:SQL-AuthorAuditor":
+  sql_2024_amount_per_customer:NL:SQL-AuthorAuditor:
     <<: *sql_2024_amount_per_customer_cfg
     strategy: NL
 
-  "entity_normalization_tiny:DSL:Entity-MapperQA": &entity_normalization_tiny_cfg
+  entity_normalization_tiny:DSL:Entity-MapperQA: &entity_normalization_tiny_cfg
     task: |
       TASK: Map 'U. of Cambridge' to a canonical ID. Output {mention, canonical_id, evidence}.
     roleset: rolesets/entity_mapper_qa.json
@@ -245,27 +247,27 @@ scenarios:
     max_rounds: 4
     kind: entity
 
-  "entity_normalization_tiny:JSON_SCHEMA:Entity-MapperQA":
+  entity_normalization_tiny:JSON_SCHEMA:Entity-MapperQA:
     <<: *entity_normalization_tiny_cfg
     strategy: JSON_SCHEMA
 
-  "entity_normalization_tiny:PSEUDOCODE:Entity-MapperQA":
+  entity_normalization_tiny:PSEUDOCODE:Entity-MapperQA:
     <<: *entity_normalization_tiny_cfg
     strategy: PSEUDOCODE
 
-  "entity_normalization_tiny:KQMLISH:Entity-MapperQA":
+  entity_normalization_tiny:KQMLISH:Entity-MapperQA:
     <<: *entity_normalization_tiny_cfg
     strategy: KQMLISH
 
-  "entity_normalization_tiny:EMERGENT_TOY:Entity-MapperQA":
+  entity_normalization_tiny:EMERGENT_TOY:Entity-MapperQA:
     <<: *entity_normalization_tiny_cfg
     strategy: EMERGENT_TOY
 
-  "entity_normalization_tiny:NL:Entity-MapperQA":
+  entity_normalization_tiny:NL:Entity-MapperQA:
     <<: *entity_normalization_tiny_cfg
     strategy: NL
 
-  "headline_xsum_tiny:DSL:Headline-WriterAuditor": &headline_xsum_tiny_cfg
+  headline_xsum_tiny:DSL:Headline-WriterAuditor: &headline_xsum_tiny_cfg
     task: |
       TASK: Write a 12–16 word, factual headline for this short article: 'UK scientists announce a breakthrough...' (invent a plausible short article body to summarize).
     roleset: rolesets/headline_writer_auditor.json
@@ -275,27 +277,27 @@ scenarios:
     max_rounds: 4
     kind: summary
 
-  "headline_xsum_tiny:JSON_SCHEMA:Headline-WriterAuditor":
+  headline_xsum_tiny:JSON_SCHEMA:Headline-WriterAuditor:
     <<: *headline_xsum_tiny_cfg
     strategy: JSON_SCHEMA
 
-  "headline_xsum_tiny:PSEUDOCODE:Headline-WriterAuditor":
+  headline_xsum_tiny:PSEUDOCODE:Headline-WriterAuditor:
     <<: *headline_xsum_tiny_cfg
     strategy: PSEUDOCODE
 
-  "headline_xsum_tiny:KQMLISH:Headline-WriterAuditor":
+  headline_xsum_tiny:KQMLISH:Headline-WriterAuditor:
     <<: *headline_xsum_tiny_cfg
     strategy: KQMLISH
 
-  "headline_xsum_tiny:EMERGENT_TOY:Headline-WriterAuditor":
+  headline_xsum_tiny:EMERGENT_TOY:Headline-WriterAuditor:
     <<: *headline_xsum_tiny_cfg
     strategy: EMERGENT_TOY
 
-  "headline_xsum_tiny:NL:Headline-WriterAuditor":
+  headline_xsum_tiny:NL:Headline-WriterAuditor:
     <<: *headline_xsum_tiny_cfg
     strategy: NL
 
-  "mcq_arc_tiny:DSL:MCQ-ReasonerAuditor": &mcq_arc_tiny_cfg
+  mcq_arc_tiny:DSL:MCQ-ReasonerAuditor: &mcq_arc_tiny_cfg
     task: |
       TASK: Choose A–D. Reason first (briefly), then output only the letter: 'Which falls faster in vacuum? A) feather B) bowling ball C) same rate D) neither'.
     roleset: rolesets/mcq_reasoner_auditor.json
@@ -305,27 +307,27 @@ scenarios:
     max_rounds: 4
     kind: qa
 
-  "mcq_arc_tiny:JSON_SCHEMA:MCQ-ReasonerAuditor":
+  mcq_arc_tiny:JSON_SCHEMA:MCQ-ReasonerAuditor:
     <<: *mcq_arc_tiny_cfg
     strategy: JSON_SCHEMA
 
-  "mcq_arc_tiny:PSEUDOCODE:MCQ-ReasonerAuditor":
+  mcq_arc_tiny:PSEUDOCODE:MCQ-ReasonerAuditor:
     <<: *mcq_arc_tiny_cfg
     strategy: PSEUDOCODE
 
-  "mcq_arc_tiny:KQMLISH:MCQ-ReasonerAuditor":
+  mcq_arc_tiny:KQMLISH:MCQ-ReasonerAuditor:
     <<: *mcq_arc_tiny_cfg
     strategy: KQMLISH
 
-  "mcq_arc_tiny:EMERGENT_TOY:MCQ-ReasonerAuditor":
+  mcq_arc_tiny:EMERGENT_TOY:MCQ-ReasonerAuditor:
     <<: *mcq_arc_tiny_cfg
     strategy: EMERGENT_TOY
 
-  "mcq_arc_tiny:NL:MCQ-ReasonerAuditor":
+  mcq_arc_tiny:NL:MCQ-ReasonerAuditor:
     <<: *mcq_arc_tiny_cfg
     strategy: NL
 
-  "paraphrase_tiny:DSL:Paraphrase-LabelerAuditor": &paraphrase_tiny_cfg
+  paraphrase_tiny:DSL:Paraphrase-LabelerAuditor: &paraphrase_tiny_cfg
     task: |
       TASK: SAME or DIFFERENT: 'The meeting is at noon.' vs 'We meet at 12pm.' Explain in one line, then label.
     roleset: rolesets/paraphrase_labeler_auditor.json
@@ -335,27 +337,27 @@ scenarios:
     max_rounds: 4
     kind: classification
 
-  "paraphrase_tiny:JSON_SCHEMA:Paraphrase-LabelerAuditor":
+  paraphrase_tiny:JSON_SCHEMA:Paraphrase-LabelerAuditor:
     <<: *paraphrase_tiny_cfg
     strategy: JSON_SCHEMA
 
-  "paraphrase_tiny:PSEUDOCODE:Paraphrase-LabelerAuditor":
+  paraphrase_tiny:PSEUDOCODE:Paraphrase-LabelerAuditor:
     <<: *paraphrase_tiny_cfg
     strategy: PSEUDOCODE
 
-  "paraphrase_tiny:KQMLISH:Paraphrase-LabelerAuditor":
+  paraphrase_tiny:KQMLISH:Paraphrase-LabelerAuditor:
     <<: *paraphrase_tiny_cfg
     strategy: KQMLISH
 
-  "paraphrase_tiny:EMERGENT_TOY:Paraphrase-LabelerAuditor":
+  paraphrase_tiny:EMERGENT_TOY:Paraphrase-LabelerAuditor:
     <<: *paraphrase_tiny_cfg
     strategy: EMERGENT_TOY
 
-  "paraphrase_tiny:NL:Paraphrase-LabelerAuditor":
+  paraphrase_tiny:NL:Paraphrase-LabelerAuditor:
     <<: *paraphrase_tiny_cfg
     strategy: NL
 
-  "translate_en_de_glossary:DSL:Translate-QE": &translate_en_de_glossary_cfg
+  translate_en_de_glossary:DSL:Translate-QE: &translate_en_de_glossary_cfg
     task: |
       TASK: EN→DE translation. Enforce glossary: {battery=Akku, charger=Ladegerät}. Preserve numbers/units.
     roleset: rolesets/translate_qe.json
@@ -365,27 +367,27 @@ scenarios:
     max_rounds: 4
     kind: translation
 
-  "translate_en_de_glossary:JSON_SCHEMA:Translate-QE":
+  translate_en_de_glossary:JSON_SCHEMA:Translate-QE:
     <<: *translate_en_de_glossary_cfg
     strategy: JSON_SCHEMA
 
-  "translate_en_de_glossary:PSEUDOCODE:Translate-QE":
+  translate_en_de_glossary:PSEUDOCODE:Translate-QE:
     <<: *translate_en_de_glossary_cfg
     strategy: PSEUDOCODE
 
-  "translate_en_de_glossary:KQMLISH:Translate-QE":
+  translate_en_de_glossary:KQMLISH:Translate-QE:
     <<: *translate_en_de_glossary_cfg
     strategy: KQMLISH
 
-  "translate_en_de_glossary:EMERGENT_TOY:Translate-QE":
+  translate_en_de_glossary:EMERGENT_TOY:Translate-QE:
     <<: *translate_en_de_glossary_cfg
     strategy: EMERGENT_TOY
 
-  "translate_en_de_glossary:NL:Translate-QE":
+  translate_en_de_glossary:NL:Translate-QE:
     <<: *translate_en_de_glossary_cfg
     strategy: NL
 
-  "winogrande_tiny:DSL:Winogrande-ResolverRefuter": &winogrande_tiny_cfg
+  winogrande_tiny:DSL:Winogrande-ResolverRefuter: &winogrande_tiny_cfg
     task: |
       TASK: Pick the correct referent: 'Tom yelled at Jerry because he was late.' Who was late?
     roleset: rolesets/winogrande_resolver_refuter.json
@@ -395,27 +397,27 @@ scenarios:
     max_rounds: 4
     kind: reasoning
 
-  "winogrande_tiny:JSON_SCHEMA:Winogrande-ResolverRefuter":
+  winogrande_tiny:JSON_SCHEMA:Winogrande-ResolverRefuter:
     <<: *winogrande_tiny_cfg
     strategy: JSON_SCHEMA
 
-  "winogrande_tiny:PSEUDOCODE:Winogrande-ResolverRefuter":
+  winogrande_tiny:PSEUDOCODE:Winogrande-ResolverRefuter:
     <<: *winogrande_tiny_cfg
     strategy: PSEUDOCODE
 
-  "winogrande_tiny:KQMLISH:Winogrande-ResolverRefuter":
+  winogrande_tiny:KQMLISH:Winogrande-ResolverRefuter:
     <<: *winogrande_tiny_cfg
     strategy: KQMLISH
 
-  "winogrande_tiny:EMERGENT_TOY:Winogrande-ResolverRefuter":
+  winogrande_tiny:EMERGENT_TOY:Winogrande-ResolverRefuter:
     <<: *winogrande_tiny_cfg
     strategy: EMERGENT_TOY
 
-  "winogrande_tiny:NL:Winogrande-ResolverRefuter":
+  winogrande_tiny:NL:Winogrande-ResolverRefuter:
     <<: *winogrande_tiny_cfg
     strategy: NL
 
-  "writer_physicist_tiny:DSL:Writer-Physicist": &writer_physicist_tiny_cfg
+  writer_physicist_tiny:DSL:Writer-Physicist: &writer_physicist_tiny_cfg
     task: |
       TASK: Write a short, accurate explainer of gravitational waves for lay readers, then technically refine.
     roleset: rolesets/writer_physicist.json
@@ -425,22 +427,22 @@ scenarios:
     max_rounds: 4
     kind: writing
 
-  "writer_physicist_tiny:JSON_SCHEMA:Writer-Physicist":
+  writer_physicist_tiny:JSON_SCHEMA:Writer-Physicist:
     <<: *writer_physicist_tiny_cfg
     strategy: JSON_SCHEMA
 
-  "writer_physicist_tiny:PSEUDOCODE:Writer-Physicist":
+  writer_physicist_tiny:PSEUDOCODE:Writer-Physicist:
     <<: *writer_physicist_tiny_cfg
     strategy: PSEUDOCODE
 
-  "writer_physicist_tiny:KQMLISH:Writer-Physicist":
+  writer_physicist_tiny:KQMLISH:Writer-Physicist:
     <<: *writer_physicist_tiny_cfg
     strategy: KQMLISH
 
-  "writer_physicist_tiny:EMERGENT_TOY:Writer-Physicist":
+  writer_physicist_tiny:EMERGENT_TOY:Writer-Physicist:
     <<: *writer_physicist_tiny_cfg
     strategy: EMERGENT_TOY
 
-  "writer_physicist_tiny:NL:Writer-Physicist":
+  writer_physicist_tiny:NL:Writer-Physicist:
     <<: *writer_physicist_tiny_cfg
     strategy: NL
