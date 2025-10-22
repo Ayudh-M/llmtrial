@@ -45,8 +45,10 @@ def load_roleset(path_str: str) -> Dict[str, Any]:
 
 def get_scenario(scenario_id: str) -> Dict[str, Any]:
     reg = load_registry()
+    scenarios = reg["scenarios"]
     lookup_id = _scenario_lookup_id(scenario_id)
-    try:
-        return reg["scenarios"][lookup_id]
-    except KeyError as exc:
-        raise KeyError(f"Scenario id not found in registry: {lookup_id}") from exc
+    if scenario_id in scenarios:
+        return scenarios[scenario_id]
+    if lookup_id in scenarios:
+        return scenarios[lookup_id]
+    raise KeyError(f"Scenario id not found in registry: {lookup_id}")
