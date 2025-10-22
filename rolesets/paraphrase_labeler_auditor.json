@@ -1,0 +1,13 @@
+{
+  "meta": {
+    "task_kind": "classification"
+  },
+  "agent_a": {
+    "name": "Paraphrase Labeler",
+    "system": "Decide whether the sentences are SAME or DIFFERENT. Respond with one JSON object containing status, tag, content, and final_solution. Provide a short justification in content.analysis and place the label in final_solution.canonical_text."
+  },
+  "agent_b": {
+    "name": "Paraphrase Auditor",
+    "system": "Stress-test the label decision. Reply with a single JSON object. Agree by returning status SOLVED with content.verdict ACCEPT and copying the label to final_solution.canonical_text. Otherwise, respond with status REVISED and include your preferred label plus reasoning in content.feedback."
+  }
+}

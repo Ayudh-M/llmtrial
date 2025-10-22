@@ -488,6 +488,100 @@ register_strategy(
 )
 
 
+_STYLE_STRATEGIES = {
+    "NL": {
+        "description": "Matrix runner natural language style",
+        "prompt": (
+            "STYLE: Use concise natural language. Be direct. Avoid fluff. Use short bullet points when helpful."
+        ),
+        "body_style": "nl",
+        "json_only": False,
+        "controller": _set_body_style_meta("nl"),
+    },
+    "JSON_SCHEMA": {
+        "description": "Matrix runner strict JSON style",
+        "prompt": (
+            "STYLE: Reply ONLY as JSON that conforms to:\n"
+            "{\n"
+            "  \"answer\": string,\n"
+            "  \"steps\": string[]\n"
+            "}\n"
+            "No prose outside JSON. If unknown, set fields to empty strings."
+        ),
+        "body_style": "json",
+        "json_only": True,
+        "controller": _toggle_json_mode,
+    },
+    "PSEUDOCODE": {
+        "description": "Matrix runner pseudocode style",
+        "prompt": (
+            "STYLE: Reply in compact pseudocode using BEGIN/END, IF, FOR, RETURN. Keep lines short."
+        ),
+        "body_style": "pseudocode",
+        "json_only": False,
+        "controller": _set_body_style_meta("pseudocode"),
+    },
+    "KQMLISH": {
+        "description": "Matrix runner symbolic dialogue style",
+        "prompt": (
+            "STYLE: Use symbolic acts, each on separate lines:\n"
+            "(propose :content \"...\")\n"
+            "(inform :content \"...\")\n"
+            "(ask :content \"...\")"
+        ),
+        "body_style": "kqml",
+        "json_only": False,
+        "controller": _set_body_style_meta("kqml"),
+    },
+    "EMERGENT_TOY": {
+        "description": "Matrix runner compressed emergent language style",
+        "prompt": (
+            "STYLE: Compressed tag-speak <T1:...>; <T2:...>. Minimize tokens. No full sentences."
+        ),
+        "body_style": "toy",
+        "json_only": False,
+        "controller": _set_body_style_meta("toy"),
+    },
+    "DSL": {
+        "description": "Matrix runner domain-specific language style",
+        "prompt": (
+            "STYLE: Reply strictly in the provided domain-specific language. If impossible, emit DSL_LIMITATION(\"<reason>\")."
+        ),
+        "body_style": "dsl",
+        "json_only": False,
+        "controller": _set_body_style_meta("dsl"),
+    },
+}
+
+
+for style_id, info in _STYLE_STRATEGIES.items():
+    register_strategy(
+        StrategyDefinition(
+            id=style_id,
+            name=f"matrix_style_{style_id.lower()}",
+            description=info["description"],
+            json_only=info["json_only"],
+            allow_cot=True,
+            max_rounds=4,
+            decoding={
+                "do_sample": False,
+                "temperature": 0.0,
+                "top_p": 1.0,
+                "max_new_tokens": 256,
+            },
+            consensus_mode="review_handshake",
+            prompt_decorators=(
+                _decorate_with_guidance(info["prompt"]),
+            ),
+            controller_behaviors=(info["controller"],),
+            metadata={
+                "title": f"Matrix style {style_id}",
+                "body_style": info["body_style"],
+            },
+        )
+    )
+
+
 REGISTRY = STRATEGY_REGISTRY
 
 

@@ -1,0 +1,13 @@
+{
+  "meta": {
+    "task_kind": "qa"
+  },
+  "agent_a": {
+    "name": "MCQ Reasoner",
+    "system": "Solve the multiple-choice question. Respond with one JSON object containing status, tag, content, and final_solution. Put your reasoning in content.analysis and the final letter (A–D) in final_solution.canonical_text."
+  },
+  "agent_b": {
+    "name": "MCQ Auditor",
+    "system": "Probe the reasoning for mistakes. Reply with a single JSON object. Approve by setting status SOLVED, content.verdict ACCEPT, and copying the chosen letter to final_solution.canonical_text. If you find an error, use status REVISED with an alternate answer and explain the fix in content.feedback."
+  }
+}

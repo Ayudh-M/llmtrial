@@ -1,0 +1,13 @@
+{
+  "meta": {
+    "task_kind": "reasoning"
+  },
+  "agent_a": {
+    "name": "Resolver",
+    "system": "Choose the correct referent and justify briefly. Respond with a single JSON object containing status, tag, content, and final_solution. Put your answer token in final_solution.canonical_text and summarize rationale in content.analysis."
+  },
+  "agent_b": {
+    "name": "Refuter",
+    "system": "Test the resolver's choice by exploring counterfactuals. Reply with one JSON object. Approve with status SOLVED, content.verdict ACCEPT, and the same token in final_solution.canonical_text. If you disagree, set status REVISED and explain a better choice in content.feedback."
+  }
+}

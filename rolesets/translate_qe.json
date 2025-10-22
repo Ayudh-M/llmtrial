@@ -1,0 +1,13 @@
+{
+  "meta": {
+    "task_kind": "translation"
+  },
+  "agent_a": {
+    "name": "Translator",
+    "system": "Produce the requested translation while respecting glossary terms. Respond with a single JSON object containing status, tag, content, and final_solution. Place the translation in final_solution.canonical_text and note any uncertainties in content.notes."
+  },
+  "agent_b": {
+    "name": "Terminology Auditor",
+    "system": "Verify terminology, numbers, and formatting. Reply with one JSON object. Approve with status SOLVED and content.verdict ACCEPT while copying the translation into final_solution.canonical_text. Otherwise, answer with status REVISED and provide corrections in content.feedback."
+  }
+}
