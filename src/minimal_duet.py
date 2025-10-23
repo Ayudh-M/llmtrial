@@ -212,6 +212,46 @@ def _build_inputs(tokenizer: Any, system_prompt: str, user_prompt: str) -> Tuple
     return input_ids, attention_mask
 
 
+def build_duet_user_prompt(
+    *,
+    actor: str,
+    turn_index: int,
+    original_task: str,
+    partner_last_raw: Optional[str],
+) -> str:
+    """
+    Compose the user message for this turn.
+
+    Always includes:
+      - the original task text verbatim
+      - the most recent partner message (if any)
+      - a short reminder that your output will be handed directly to your counterpart
+
+    Keep the text neutral; we are not enforcing schemas here. Prompts in rolesets
+    can still ask for JSON, etc.
+    """
+
+    parts: List[str] = []
+    parts.append(f"=== ORIGINAL TASK (verbatim) ===\n{original_task.strip()}\n")
+
+    if partner_last_raw:
+        parts.append(
+            "=== PARTNER'S LATEST MESSAGE (verbatim) ===\n"
+            f"{partner_last_raw}\n"
+        )
+    else:
+        parts.append("=== PARTNER'S LATEST MESSAGE ===\n<none – you start>\n")
+
+    parts.append(
+        f"=== YOUR TURN ===\n"
+        f"You are Agent {actor}, turn {turn_index} of {TURN_COUNT}.\n"
+        "Your message will be forwarded verbatim to your counterpart.\n"
+        "Stay tightly on the original task; do not drift.\n"
+        "Be explicit, concise, and do not assume facts not in evidence.\n"
+    )
+    return "\n".join(parts)
+
+
 @torch.inference_mode()
 def _generate(
     model: Any,
@@ -380,8 +420,13 @@ def _execute(cfg: RunConfig) -> Tuple[str, Dict[str, Any]]:
     for idx in range(1, TURN_COUNT + 1):
         actor = "A" if idx % 2 == 1 else "B"
         if actor == "A":
-            incoming = next_for_a
-            result = _run_turn(actor, idx, incoming, system_a, cfg, model_a, tokenizer_a)
+            incoming_user = build_duet_user_prompt(
+                actor="A",
+                turn_index=idx,
+                original_task=task_text,
+                partner_last_raw=next_for_a,
+            )
+            result = _run_turn(actor, idx, incoming_user, system_a, cfg, model_a, tokenizer_a)
             if result.error:
                 status = "ERROR"
                 error_message = result.error
@@ -389,8 +434,13 @@ def _execute(cfg: RunConfig) -> Tuple[str, Dict[str, Any]]:
                 break
             next_for_b = result.raw or ""
         else:
-            incoming = next_for_b
-            result = _run_turn(actor, idx, incoming, system_b, cfg, model_b, tokenizer_b)
+            incoming_user = build_duet_user_prompt(
+                actor="B",
+                turn_index=idx,
+                original_task=task_text,
+                partner_last_raw=next_for_b,
+            )
+            result = _run_turn(actor, idx, incoming_user, system_b, cfg, model_b, tokenizer_b)
             if result.error:
                 status = "ERROR"
                 error_message = result.error
